@@ -1,11 +1,13 @@
 type ControlPanelProps = {
-  onConnect: () => void;
+  onConnect: () => void
+  onSendMessage: () => void
 };
 
-function ControlPanel({ onConnect }: ControlPanelProps) {
+function ControlPanel({ onConnect, onSendMessage }: ControlPanelProps) {
   return (
     <section>
       <button onClick={onConnect}>Connect</button>
+      <button onClick={onSendMessage}>Send Message</button>
     </section>
   );
 }

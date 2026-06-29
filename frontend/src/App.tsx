@@ -6,26 +6,31 @@ import VideoDisplay from "./components/VideoDisplay";
 import ControlPanel from "./components/ControlPanel";
 import BallData from "./components/BallData";
 
+import { connectWebTransport, sendMessage } from "./services/webtransport"
+
 import { useState } from "react";
 
 function App() {
   const [status, setStatus] = useState("Disconnected")
 
-  const handleConnect = () => {
+  const handleConnect = async () => {
     setStatus("Connecting...")
-    // to be expanded on
-    // setStatus("Connected")
+    const ok = await connectWebTransport()
+    setStatus(ok ? "Connected" : "Disconnected")
   }
 
-  const [ballX, setBallX] = useState<number | null>(null);
-  const [ballY, setBallY] = useState<number | null>(null);
+  const [ballX] = useState<number | null>(null);
+  const [ballY] = useState<number | null>(null);
 
   return (
     <>
       <Header />
       <Status status={status} />
       <VideoDisplay />
-      <ControlPanel onConnect={handleConnect} />
+      <ControlPanel 
+        onConnect={handleConnect} 
+        onSendMessage={() => sendMessage({type: "ping"})} 
+      />
       <BallData x={ballX} y={ballY} />
     </>
   );
