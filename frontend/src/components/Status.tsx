@@ -1,5 +1,5 @@
 type StatusProp = {
-  status: String;
+  status: string;
 };
 
 function Status({ status }: StatusProp) {

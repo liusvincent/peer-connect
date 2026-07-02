@@ -7,6 +7,7 @@ import asyncio
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import ProtocolNegotiated, ConnectionTerminated 
 
+from webrtc import WebRTCSession
 
 from typing import Callable
 
@@ -24,17 +25,41 @@ class WebTransportHandler:
         self.connection = connection
         self.stream_id = stream_id
         self.transmit = transmit
+        self.webrtc = None
+        self.buffer = b""
 
-    def handle_event(self, event):
-        if isinstance(event, WebTransportStreamDataReceived):
-            print("session:", event.session_id)
-            print("stream:", event.stream_id)
-            self.handle_message(event.data)
+    async def handle_event(self, event):
+        if not isinstance(event, WebTransportStreamDataReceived):
+           return
+        
+        self.buffer += event.data
+        while b"\n" in self.buffer:
+            raw_message, self.buffer = self.buffer.split(b"\n", 1)
+            if not raw_message:
+                continue
+            try:
+                message = json.loads(raw_message.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                print("Invalid message:", e)
+                continue
 
-    def handle_message(self, data: bytes):
-        text = data.decode("utf-8")
-        message = json.loads(text)
-        print("message", message)
+            await self.handle_message(message, event.stream_id)
+    
+    async def handle_message(self, message: dict, stream_id: int):
+        if message.get("type") == "webrtc-offer":
+            if self.webrtc is None:
+                self.webrtc = WebRTCSession()
+            answer = await self.webrtc.handle_offer(message["sdp"])
+            response = (json.dumps(answer) + "\n").encode("utf-8")
+            self.connection._quic.send_stream_data(
+                stream_id=stream_id,
+                data=response,
+                end_stream=False,
+            )
+            self.transmit()
+        else:
+            print("message:", message)
+
 
 class WebTransportProtocol(QuicConnectionProtocol):
     """ QUIC protocol implementation for the webTransport server
@@ -96,8 +121,8 @@ class WebTransportProtocol(QuicConnectionProtocol):
 
         elif isinstance(event, WebTransportStreamDataReceived):
             handler = self.handlers.get(event.session_id)
-            if handler is not None:
-                handler.handle_event(event)
+            if handler:
+                asyncio.create_task(handler.handle_event(event))
     
 async def main():
     host = "localhost"

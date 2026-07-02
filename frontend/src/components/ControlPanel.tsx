@@ -1,13 +1,13 @@
 type ControlPanelProps = {
-  onConnect: () => void
-  onSendMessage: () => void
+  onConnect: () => void;
+  onSendOffer: () => void;
 };
 
-function ControlPanel({ onConnect, onSendMessage }: ControlPanelProps) {
+function ControlPanel({ onConnect, onSendOffer }: ControlPanelProps) {
   return (
     <section>
       <button onClick={onConnect}>Connect</button>
-      <button onClick={onSendMessage}>Send Message</button>
+      <button onClick={onSendOffer}>Start WebRTC</button>
     </section>
   );
 }

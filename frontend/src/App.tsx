@@ -6,18 +6,24 @@ import VideoDisplay from "./components/VideoDisplay";
 import ControlPanel from "./components/ControlPanel";
 import BallData from "./components/BallData";
 
-import { connectWebTransport, sendMessage } from "./services/webtransport"
+import { connectWebTransport } from "./services/webtransport";
+import { startWebRTC } from "./services/webrtc";
 
 import { useState } from "react";
 
 function App() {
-  const [status, setStatus] = useState("Disconnected")
+  const [status, setStatus] = useState("Disconnected");
+  const [ remoteStream, setRemoteStream ] = useState<MediaStream |null>(null);
 
-  const handleConnect = async () => {
-    setStatus("Connecting...")
-    const ok = await connectWebTransport()
-    setStatus(ok ? "Connected" : "Disconnected")
+  const handleStartWebRTC = () => {
+    void startWebRTC(setRemoteStream);
   }
+  
+  const handleConnect = async () => {
+    setStatus("Connecting...");
+    const ok = await connectWebTransport();
+    setStatus(ok ? "Connected" : "Disconnected");
+  };
 
   const [ballX] = useState<number | null>(null);
   const [ballY] = useState<number | null>(null);
@@ -26,11 +32,8 @@ function App() {
     <>
       <Header />
       <Status status={status} />
-      <VideoDisplay />
-      <ControlPanel 
-        onConnect={handleConnect} 
-        onSendMessage={() => sendMessage({type: "ping"})} 
-      />
+      <VideoDisplay stream={remoteStream} />
+      <ControlPanel onConnect={handleConnect} onSendOffer={handleStartWebRTC} />
       <BallData x={ballX} y={ballY} />
     </>
   );
