@@ -9,6 +9,8 @@ import asyncio
 from aiortc.mediastreams import VideoStreamTrack
 from av import VideoFrame
 
+from typing import Callable
+
 class BallVideoTrack(VideoStreamTrack):
     def __init__(self, frame_queue: queue.Queue):
         super().__init__()
@@ -25,7 +27,12 @@ class BallVideoTrack(VideoStreamTrack):
 
         return video_frame
 
-def ball_worker(frame_queue: queue.Queue, stop_event: threading.Event):
+def ball_worker(
+    frame_queue: queue.Queue, 
+    stop_event: threading.Event, 
+    config, 
+    on_coordinates: Callable[[int, int], None]
+):
     x, y = 320, 240
     vx, vy = 4, 3
     radius = 20
@@ -44,4 +51,5 @@ def ball_worker(frame_queue: queue.Queue, stop_event: threading.Event):
         if frame_queue.full():
             frame_queue.get_nowait()
         frame_queue.put_nowait(frame)
-        time.sleep(1/30) # fps
+        on_coordinates(x, y)
+        time.sleep(1/config.fps) # fps

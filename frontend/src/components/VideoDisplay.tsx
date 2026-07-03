@@ -14,7 +14,7 @@ function VideoDisplay({ stream }: VideoDisplayProps ) {
     return () => {
       video.srcObject = null;
     };
-  }, [stream]);
+  }, [stream]); 
 
   return (
     <section style={{ display: "flex", justifyContent: "center" }}>

@@ -13,6 +13,12 @@ export async function startWebRTC(
   const newPc = new RTCPeerConnection();
   pc = newPc;
 
+  newPc.addEventListener("connectionstatechange", () => {
+    if (newPc.connectionState === "failed") {
+      closePeerConnection(newPc);
+    }
+  });
+
   const remoteStream = new MediaStream();
 
   try {
@@ -31,21 +37,45 @@ export async function startWebRTC(
       sdp: newPc.localDescription!.sdp,
     });
   } catch (err) {
-    newPc.close();
-    if (pc === newPc) {
-      pc = null;
-    }
+    closePeerConnection(newPc);
     throw err;
   }
 }
 
 export async function handleWebRTCAnswer(sdp: string) {
-  if (!pc) {
+  const currentPc = pc;
+  
+  if (!currentPc) {
     throw new Error("Peer Connection has not been created");
   }
-  await pc.setRemoteDescription({
-    type: "answer",
-    sdp,
+  try {
+    await currentPc.setRemoteDescription({
+      type: "answer",
+      sdp,
+    });
+    console.log("WebRTC answer applied");
+  } catch (err) {
+    closePeerConnection(currentPc);
+    throw err;
+  }
+}
+
+function closePeerConnection(
+  connection: RTCPeerConnection | null,
+) {
+  if (!connection) return;
+
+  connection.getReceivers().forEach((receiver) => {
+    receiver.track?.stop();
   });
-  console.log("WebRTC answer applied");
+
+  connection.close();
+
+  if (pc === connection) {
+    pc = null;
+  }
+}
+
+export function disconnectWebRTC() {
+  closePeerConnection(pc);
 }

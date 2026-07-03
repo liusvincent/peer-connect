@@ -6,34 +6,89 @@ import VideoDisplay from "./components/VideoDisplay";
 import ControlPanel from "./components/ControlPanel";
 import BallData from "./components/BallData";
 
-import { connectWebTransport } from "./services/webtransport";
-import { startWebRTC } from "./services/webrtc";
+import {
+  connectWebTransport,
+  sendMessage,
+  disconnectWebTransport,
+} from "./services/webtransport";
+import {
+  startWebRTC,
+  handleWebRTCAnswer,
+  disconnectWebRTC,
+} from "./services/webrtc";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 function App() {
   const [status, setStatus] = useState("Disconnected");
-  const [ remoteStream, setRemoteStream ] = useState<MediaStream |null>(null);
+  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
+  const [fps, setFps] = useState(30);
+  const [ballX, setX] = useState<number | null>(null);
+  const [ballY, setY] = useState<number | null>(null);
 
-  const handleStartWebRTC = () => {
-    void startWebRTC(setRemoteStream);
-  }
-  
+  const handleStartWebRTC = async () => {
+    try {
+      await startWebRTC(setRemoteStream);
+    } catch (err) {
+      console.error("Failed to start WebRTC:", err);
+    }
+  };
+
+  const handleBallCoords = (ballX: number, ballY: number) => {
+    setX(ballX);
+    setY(ballY);
+  };
+
   const handleConnect = async () => {
     setStatus("Connecting...");
-    const ok = await connectWebTransport();
+    const ok = await connectWebTransport({
+      onAnswer: handleWebRTCAnswer,
+      onCoordinates: handleBallCoords,
+      onDisconnect: resetDisconnectedState,
+    });
     setStatus(ok ? "Connected" : "Disconnected");
   };
 
-  const [ballX] = useState<number | null>(null);
-  const [ballY] = useState<number | null>(null);
+  const resetDisconnectedState = () => {
+    disconnectWebRTC();
+    setRemoteStream(null);
+    setStatus("Disconnected");
+  };
+
+  const handleDisconnect = async () => {
+    try {
+      await disconnectWebTransport();
+    } finally {
+      resetDisconnectedState();
+    }
+  };
+
+  // WebTransport fps change
+  useEffect(() => {
+    if (status !== "Connected") return;
+
+    const timeout = setTimeout(() => {
+      sendMessage({
+        type: "set-fps",
+        fps,
+      }).catch(console.error);
+    }, 250);
+    return () => clearTimeout(timeout);
+  }, [fps, status]);
 
   return (
     <>
       <Header />
       <Status status={status} />
       <VideoDisplay stream={remoteStream} />
-      <ControlPanel onConnect={handleConnect} onSendOffer={handleStartWebRTC} />
+      <ControlPanel
+        onConnect={handleConnect}
+        onDisconnect={handleDisconnect}
+        onSendOffer={handleStartWebRTC}
+        onFps={setFps}
+        fps={fps}
+        status={status}
+      />
       <BallData x={ballX} y={ballY} />
     </>
   );

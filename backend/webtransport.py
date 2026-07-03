@@ -11,7 +11,13 @@ from webrtc import WebRTCSession
 
 from typing import Callable
 
+from dataclasses import dataclass
+
 import json
+
+@dataclass
+class StreamConfig:
+    fps: float = 30
 
 class WebTransportHandler:
     """ Handles a webTransport session within a connection
@@ -27,38 +33,96 @@ class WebTransportHandler:
         self.transmit = transmit
         self.webrtc = None
         self.buffer = b""
+        self.config = StreamConfig()
+        self.closed = False
+        self.event_lock = asyncio.Lock()
 
     async def handle_event(self, event):
         if not isinstance(event, WebTransportStreamDataReceived):
            return
-        
-        self.buffer += event.data
-        while b"\n" in self.buffer:
-            raw_message, self.buffer = self.buffer.split(b"\n", 1)
-            if not raw_message:
-                continue
-            try:
-                message = json.loads(raw_message.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as e:
-                print("Invalid message:", e)
-                continue
+        async with self.event_lock:
+            self.buffer += event.data
+            while b"\n" in self.buffer:
+                raw_message, self.buffer = self.buffer.split(b"\n", 1)
+                if not raw_message:
+                    continue
+                try:
+                    message = json.loads(raw_message.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as err:
+                    print("Invalid JSON:", err)
+                    continue
 
-            await self.handle_message(message, event.stream_id)
+                if not isinstance(message, dict):
+                    print("Message must be an object:", message)
+                    continue
+
+                await self.handle_message(message, event.stream_id)
     
     async def handle_message(self, message: dict, stream_id: int):
-        if message.get("type") == "webrtc-offer":
-            if self.webrtc is None:
-                self.webrtc = WebRTCSession()
-            answer = await self.webrtc.handle_offer(message["sdp"])
-            response = (json.dumps(answer) + "\n").encode("utf-8")
-            self.connection._quic.send_stream_data(
-                stream_id=stream_id,
-                data=response,
-                end_stream=False,
-            )
-            self.transmit()
-        else:
-            print("message:", message)
+        match message.get("type"):
+            
+            case "webrtc-offer":
+                sdp = message.get("sdp")
+
+                if not isinstance(sdp, str):
+                    print("Invalid WebRTC offer:", message)
+                    return
+                
+                if self.webrtc is None:
+                    loop = asyncio.get_running_loop()
+
+                    def on_coordinates(x: int, y: int) -> None:
+                        loop.call_soon_threadsafe(
+                            self.send_message,
+                            stream_id,
+                            {
+                                "type": "coordinates",
+                                "x": x,
+                                "y": y,
+                            },
+                        )
+
+                    self.webrtc = WebRTCSession(self.config, on_coordinates)
+
+                try:
+                    answer = await self.webrtc.handle_offer(sdp)
+                except Exception:
+                    await self.webrtc.close()
+                    self.webrtc = None
+                    raise
+
+                self.send_message(stream_id, answer)
+            
+            case "set-fps":
+                fps = message.get("fps")
+                if isinstance(fps, int) and 1 <= fps <=30:
+                    self.config.fps = fps
+
+            case _:
+                print("Unknown Message")
+
+    def send_message(self, stream_id: int, message: dict):
+        if self.closed:
+            return
+        
+        data = (json.dumps(message) + "\n").encode("utf-8")
+
+        self.connection._quic.send_stream_data(
+            stream_id=stream_id,
+            data=data,
+            end_stream=False,
+        )
+        self.transmit()
+
+    async def close(self):
+        if self.closed:
+            return
+
+        self.closed = True
+
+        if self.webrtc is not None:
+            await self.webrtc.close()
+            self.webrtc = None
 
 
 class WebTransportProtocol(QuicConnectionProtocol):
@@ -74,16 +138,26 @@ class WebTransportProtocol(QuicConnectionProtocol):
         """ Function is called whenever something happens on the QUIC connection
         """
         print("Quic Event: ", type(event).__name__)
-        
-        if isinstance(event, ConnectionTerminated):
-            print("terminated:", event.error_code, event.reason_phrase)
 
         if isinstance(event, ProtocolNegotiated):
             self.http = H3Connection(self._quic, enable_webtransport=True)
+
+        if isinstance(event, ConnectionTerminated):
+            print("terminated:", event.error_code, event.reason_phrase)
+            asyncio.create_task(self.close_all_handlers())
         
         if self.http is not None:
             for h3_event in self.http.handle_event(event):
                 self.http_event_received(h3_event)
+
+    async def close_all_handlers(self):
+        handlers = list(self.handlers.values())
+        self.handlers.clear()
+
+        await asyncio.gather(
+            *(handler.close() for handler in handlers),
+            return_exceptions=True,
+        )
 
     def http_event_received(self, event):
         """ Handles HTTP/3 events
@@ -120,9 +194,35 @@ class WebTransportProtocol(QuicConnectionProtocol):
                 self.transmit()
 
         elif isinstance(event, WebTransportStreamDataReceived):
-            handler = self.handlers.get(event.session_id)
-            if handler:
-                asyncio.create_task(handler.handle_event(event))
+            asyncio.create_task(
+                self.handle_webtransport_event(event)
+            )
+
+    async def handle_webtransport_event(self, event):
+        handler = self.handlers.get(event.session_id)
+
+        if handler is None:
+            return
+
+        try:
+            await handler.handle_event(event)
+        except Exception as err:
+            print("WebTransport handler failed:", err)
+
+            self.handlers.pop(event.session_id, None)
+            await handler.close()
+
+            handler.connection._quic.send_stream_data(
+                stream_id=event.stream_id,
+                data=b"",
+                end_stream=True,
+            )
+            handler.transmit()
+            return
+
+        if event.stream_ended:
+            self.handlers.pop(event.session_id, None)
+            await handler.close()
     
 async def main():
     host = "localhost"
