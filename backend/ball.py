@@ -11,11 +11,12 @@ from av import VideoFrame
 
 from typing import Callable
 
+
 class BallVideoTrack(VideoStreamTrack):
     def __init__(self, frame_queue: queue.Queue):
         super().__init__()
         self.frame_queue = frame_queue
-    
+
     async def recv(self) -> VideoFrame:
         pts, time_base = await self.next_timestamp()
 
@@ -27,11 +28,12 @@ class BallVideoTrack(VideoStreamTrack):
 
         return video_frame
 
+
 def ball_worker(
-    frame_queue: queue.Queue, 
-    stop_event: threading.Event, 
-    config, 
-    on_coordinates: Callable[[int, int], None]
+    frame_queue: queue.Queue,
+    stop_event: threading.Event,
+    config,
+    on_coordinates: Callable[[int, int], None],
 ):
     x, y = 320, 240
     vx, vy = 4, 3
@@ -43,7 +45,7 @@ def ball_worker(
         frame = np.zeros((height, width, 3), dtype=np.uint8)
         if x - radius <= 0 or x + radius >= width:
             vx *= -1
-        if y - radius <=0 or y + radius >= height:
+        if y - radius <= 0 or y + radius >= height:
             vy *= -1
         x += vx
         y += vy
@@ -52,4 +54,4 @@ def ball_worker(
             frame_queue.get_nowait()
         frame_queue.put_nowait(frame)
         on_coordinates(x, y)
-        time.sleep(1/config.fps) # fps
+        time.sleep(1 / config.fps)  # fps

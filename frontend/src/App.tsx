@@ -21,18 +21,28 @@ import { useState, useEffect } from "react";
 
 function App() {
   const [status, setStatus] = useState("Disconnected");
+  const [webrtcActive, setWebRTCActive] = useState(false);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [fps, setFps] = useState(30);
   const [ballX, setX] = useState<number | null>(null);
   const [ballY, setY] = useState<number | null>(null);
 
   const handleStartWebRTC = async () => {
+    setWebRTCActive(true);
     try {
-      await startWebRTC(setRemoteStream);
+      await startWebRTC(setRemoteStream, resetWebRTCState);
     } catch (err) {
+      setWebRTCActive(false);
       console.error("Failed to start WebRTC:", err);
     }
   };
+
+  const resetWebRTCState = () => {
+    setWebRTCActive(false);
+    setRemoteStream(null);
+    setX(null);
+    setY(null);
+  }
 
   const handleBallCoords = (ballX: number, ballY: number) => {
     setX(ballX);
@@ -51,7 +61,7 @@ function App() {
 
   const resetDisconnectedState = () => {
     disconnectWebRTC();
-    setRemoteStream(null);
+    resetWebRTCState();
     setStatus("Disconnected");
   };
 
@@ -88,6 +98,7 @@ function App() {
         onFps={setFps}
         fps={fps}
         status={status}
+        webrtcActive={webrtcActive}
       />
       <BallData x={ballX} y={ballY} />
     </>

@@ -5,6 +5,7 @@ type ControlPanelProps = {
   onFps: (fps: number) => void;
   fps: number;
   status: string;
+  webrtcActive: boolean;
 };
 
 function ControlPanel({
@@ -14,6 +15,7 @@ function ControlPanel({
   onFps,
   fps,
   status,
+  webrtcActive,
 }: ControlPanelProps) {
   return (
     <section>
@@ -23,7 +25,7 @@ function ControlPanel({
       <button onClick={onDisconnect} disabled={status !== "Connected"}>
         Disconnect
       </button>
-      <button onClick={onSendOffer} disabled={status !== "Connected"}>
+      <button onClick={onSendOffer} disabled={status !== "Connected" || webrtcActive}>
         Start WebRTC
       </button>
       <label>

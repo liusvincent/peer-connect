@@ -1,9 +1,11 @@
 import { sendMessage } from "./webtransport";
 
 let pc: RTCPeerConnection | null = null;
+let onPeerConnectionEnd: (() => void) | null = null;
 
 export async function startWebRTC(
   onRemoteStream: (stream: MediaStream) => void,
+  onConnectionEnd: () => void,
 ) {
   if (pc && pc.connectionState !== "closed") {
     console.log("WebRTC already started");
@@ -12,9 +14,13 @@ export async function startWebRTC(
 
   const newPc = new RTCPeerConnection();
   pc = newPc;
+  onPeerConnectionEnd = onConnectionEnd;
 
   newPc.addEventListener("connectionstatechange", () => {
-    if (newPc.connectionState === "failed") {
+    if (
+      newPc.connectionState === "failed" ||
+      newPc.connectionState === "closed"
+    ) {
       closePeerConnection(newPc);
     }
   });
@@ -24,7 +30,7 @@ export async function startWebRTC(
   try {
     newPc.addEventListener("track", (event) => {
       remoteStream.addTrack(event.track);
-      onRemoteStream(remoteStream)
+      onRemoteStream(remoteStream);
     });
 
     newPc.addTransceiver("video", { direction: "recvonly" });
@@ -44,7 +50,7 @@ export async function startWebRTC(
 
 export async function handleWebRTCAnswer(sdp: string) {
   const currentPc = pc;
-  
+
   if (!currentPc) {
     throw new Error("Peer Connection has not been created");
   }
@@ -60,9 +66,7 @@ export async function handleWebRTCAnswer(sdp: string) {
   }
 }
 
-function closePeerConnection(
-  connection: RTCPeerConnection | null,
-) {
+function closePeerConnection(connection: RTCPeerConnection | null) {
   if (!connection) return;
 
   connection.getReceivers().forEach((receiver) => {
@@ -73,6 +77,10 @@ function closePeerConnection(
 
   if (pc === connection) {
     pc = null;
+
+    const callback = onPeerConnectionEnd;
+    onPeerConnectionEnd = null;
+    callback?.();
   }
 }
 
