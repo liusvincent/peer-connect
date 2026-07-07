@@ -9,20 +9,24 @@ from typing import Callable
 
 import asyncio
 
+from dataclasses import dataclass
+
+@dataclass
+class StreamConfig:
+    fps: float = 30
 
 class WebRTCSession:
     def __init__(self, config, on_coordinates: Callable[[int, int], None]):
         self.pc = RTCPeerConnection()
         self.frame_queue = queue.Queue(maxsize=3)
         self.stop_event = threading.Event()
+        self.track = BallVideoTrack(self.frame_queue)
+        
         self.worker = None
+        self.closed = False
 
         self.config = config
         self.on_coordinates = on_coordinates
-
-        self.track = BallVideoTrack(self.frame_queue)
-
-        self.closed = False
 
         @self.pc.on("connectionstatechange")
         async def on_connectionstatechange():

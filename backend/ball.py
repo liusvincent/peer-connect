@@ -28,7 +28,6 @@ class BallVideoTrack(VideoStreamTrack):
 
         return video_frame
 
-
 def ball_worker(
     frame_queue: queue.Queue,
     stop_event: threading.Event,

@@ -7,18 +7,11 @@ import asyncio
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.events import ProtocolNegotiated, ConnectionTerminated
 
-from webrtc import WebRTCSession
+from webrtc import WebRTCSession, StreamConfig
 
 from typing import Callable
 
-from dataclasses import dataclass
-
 import json
-
-
-@dataclass
-class StreamConfig:
-    fps: float = 30
 
 
 class WebTransportHandler:
