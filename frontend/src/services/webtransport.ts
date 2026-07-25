@@ -1,5 +1,6 @@
+// for certs purposes
 const HEXFINGERPRINT =
-  "76dfb2cf33187dafb1c9f0d30245a2a338dc5b2f1fd89e0d4da8ee909cf3a9c3";
+  "27ce3136a2b7de8cf8dc2059c21141b3179f099d0b2e829b56279ddafac132b5";
 
 const convertHexToBytes = (hex: string): Uint8Array =>
   Uint8Array.from({ length: hex.length / 2 }, (_, i) =>
@@ -7,20 +8,44 @@ const convertHexToBytes = (hex: string): Uint8Array =>
   );
 
 const hash: Uint8Array = convertHexToBytes(HEXFINGERPRINT);
+// end of certs
 
-type WebTransportHandlers = {
-  onCoordinates?: (x: number, y: number) => void;
-  onAnswer?: (sdp: string) => Promise<void>;
-  onDisconnect?: () => void;
+type ServerMessage = 
+  | { type: "joined-room"; request_id: string; participant_id: string; room_id: string }
+  | { type: "webrtc-answer"; request_id: string; sdp: string }
+  | { type: "request-error"; request_id: string; message: string };
+
+export type ClientRequest = 
+  | { type: "join-room"; request_id: string; room_id: string; } 
+  | { type: "create-room"; request_id: string; }
+  | { type: "webrtc-offer"; request_id: string; sdp: string }
+;
+type PendingRequest = {
+  resolve: (message: ServerMessage) => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
 };
+
+const pendingRequests = new Map<string, PendingRequest>();
+
+// type MessageType = ServerMessage["type"];
+
+// type MessageHandler<T extends MessageType> = (
+//   message: Extract<ServerMessage, { type: T }>
+// ) => void;
+
+// const listeners = new Map<MessageType, Set<(message: ServerMessage) => void>>();
 
 let transport: WebTransport | null = null;
 let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
-export async function connectWebTransport(
-  handlers: WebTransportHandlers = {}
-) {
+export async function connectWebTransport() {
+  if (transport && writer && reader) {
+    return true;
+  } // if connection already exists
+  
+  // clean up incomplete/stale connections
   await disconnectWebTransport();
 
   try {
@@ -42,12 +67,32 @@ export async function connectWebTransport(
     writer = stream.writable.getWriter();
     reader = stream.readable.getReader();
 
-    void listenForMessage(reader, handlers);
+    void listenForMessage(reader);
     return true;
   } catch (err) {
     console.error(err);
     return false;
   }
+}
+
+function removePendingRequest(requestId: string) {
+  const pending = pendingRequests.get(requestId);
+  if (!pending) return;
+
+  clearTimeout(pending.timeout);
+  pendingRequests.delete(requestId);
+}
+
+export async function request(message: ClientRequest) {
+  const responsePromise = waitForResponse(message.request_id);
+  try {
+    await sendMessage(message);
+  } catch (err) {
+    removePendingRequest(message.request_id);
+    throw err;
+  }
+  
+  return responsePromise;
 }
 
 export async function sendMessage(message: object) {
@@ -59,41 +104,42 @@ export async function sendMessage(message: object) {
   await writer.write(encoder.encode(json));
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+async function waitForResponse(
+  requestId: string,
+  timeoutMs: number = 10_000,
+): Promise<ServerMessage> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      reject(new Error("Server response timed out"));
+    }, timeoutMs);
+
+    pendingRequests.set(requestId, {
+      resolve,
+      reject,
+      timeout
+    });
+  });
 }
 
-async function handleMessage(
-  message: unknown,
-  handlers: WebTransportHandlers = {},
-) {
-  if (!isRecord(message) || typeof message.type !== "string") {
-    console.warn("Invalid message:", message);
-    return;
-  }
-  switch (message.type) {
-    case "answer":
-      if (typeof message.sdp !== "string") {
-      console.warn("Invalid WebRTC answer:", message);
-      break;
-    }
-      await handlers.onAnswer?.(message.sdp);
-      break;
+function handleMessage(message: ServerMessage) {
+  if (!message.request_id) return;
 
-    case "coordinates":
-      if (typeof message.x === "number" && typeof message.y === "number") {
-        handlers.onCoordinates?.(message.x, message.y);
-      }
-      break;
+  const pending = pendingRequests.get(message.request_id);
+  if (!pending) return;
 
-    default:
-      console.warn("Unknown message:", message);
+  clearTimeout(pending.timeout);
+  pendingRequests.delete(message.request_id);
+
+  if (message.type === "request-error") {
+    pending.reject(new Error(message.message));
+  } else {
+    pending.resolve(message);
   }
 }
 
 export async function listenForMessage(
   currentReader: ReadableStreamDefaultReader<Uint8Array>,
-  handlers: WebTransportHandlers = {},
 ) {
   let readBuffer = "";
   const decoder = new TextDecoder();
@@ -116,7 +162,7 @@ export async function listenForMessage(
 
         try {
           const message = JSON.parse(rawMessage);
-          await handleMessage(message, handlers);
+          handleMessage(message);
         } catch (err) {
           console.error(err);
         }
@@ -127,7 +173,6 @@ export async function listenForMessage(
   } finally {
     if (reader === currentReader) {
       await disconnectWebTransport();
-      handlers.onDisconnect?.();
     }
   }
 }
