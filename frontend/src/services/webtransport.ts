@@ -11,15 +11,17 @@ const hash: Uint8Array = convertHexToBytes(HEXFINGERPRINT);
 // end of certs
 
 type ServerMessage = 
-  | { type: "joined-room"; request_id: string; participant_id: string; room_id: string }
   | { type: "webrtc-answer"; request_id: string; sdp: string }
-  | { type: "request-error"; request_id: string; message: string };
+  | { type: "request-error"; request_id: string; message: string }
+  | { type: "joined-room"; request_id: string; participant_id: string; room_id: string }
+  | { type: "left-room"; request_id: string; participant_id: string; room_id: string };
 
 export type ClientRequest = 
-  | { type: "join-room"; request_id: string; room_id: string; } 
-  | { type: "create-room"; request_id: string; }
   | { type: "webrtc-offer"; request_id: string; sdp: string }
-;
+  | { type: "join-room"; request_id: string; room_id: string } 
+  | { type: "create-room"; request_id: string; }
+  | { type: "leave-room"; request_id: string };
+  
 type PendingRequest = {
   resolve: (message: ServerMessage) => void;
   reject: (error: Error) => void;

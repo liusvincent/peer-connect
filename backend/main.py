@@ -6,8 +6,10 @@ from aioquic.h3.connection import H3_ALPN
 from aioquic.asyncio import serve
 
 import asyncio
+from functools import partial
 
 from webtransport import WebTransportProtocol
+from rooms import RoomManager
 
 # front
 # app = FastAPI()
@@ -21,11 +23,16 @@ async def main():
     configuration = QuicConfiguration(is_client=False, alpn_protocols=H3_ALPN)
     configuration.load_cert_chain("cert.pem", "key.pem")
 
+    room_manager = RoomManager()
+
     await serve(
         host=host,
         port=port,
         configuration=configuration,
-        create_protocol=WebTransportProtocol,
+        create_protocol=partial(
+            WebTransportProtocol,
+            room_manager=room_manager,
+        ),
     )
     print(f"WebTransport Server running on https://{host}:{port}/wt")
 

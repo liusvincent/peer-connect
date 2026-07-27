@@ -18,14 +18,14 @@ What the server can do:
 - End a room
 """
 
-from aioquic.h3.connection import H3Connection, H3_ALPN
+from aioquic.h3.connection import H3Connection
 from aioquic.h3.events import WebTransportStreamDataReceived, HeadersReceived
 from aioquic.quic.events import ProtocolNegotiated, ConnectionTerminated
-from aioquic.asyncio import QuicConnectionProtocol, serve
+from aioquic.asyncio import QuicConnectionProtocol
 import asyncio
 
 from webrtc import WebRTCSession
-from rooms import Participant, RoomManager
+from rooms import Participant, RoomManager, RoomError
 
 from uuid import uuid4
 from typing import Callable
@@ -101,46 +101,91 @@ class WebTransportHandler:
                 })
 
             case "join-room":
-                # room_id = message.get("room_id")
-                # self.participant = Participant(
-                #     id=uuid4(),
-                #     name="test-name",
-                #     stream_id=stream_id,
-                #     send=self.send_message,
-                #     room_manager=self.room_manager
-                # )
-                # await self.room_manager.join_room(self.participant, room_id)
+                if self.participant is None:
+                    self.participant = Participant(
+                        id=str(uuid4()),
+                        name="john doe",
+                        stream_id=stream_id,
+                    )
+                room_id = message.get("room_id")
+
+                try:
+                    self.room_manager.join_lobby(self.participant, room_id)
+                except RoomError as err:
+                    self.send_message(stream_id, {
+                        "type": "request-error",
+                        "request_id": message.get("request_id"),
+                        "message": err.code,
+                    })
+                    return
+                
+
                 self.send_message(stream_id, {
                     "type": "joined-room",
                     "request_id": message.get("request_id"),
-                    "room_id": "testid",
+                    "participant_id": self.participant.id,
+                    "room_id": room_id,
                 })
 
             case "create-room":
-                # self.participant = Participant(
-                #     id=uuid4(),
-                #     name="test-name",
-                #     stream_id=stream_id,
-                #     send=self.send_message,
-                #     room_manager=self.room_manager
-                # )
-                # await self.room_manager.join_room(self.participant, room_id)
+                if self.participant is None:
+                    self.participant = Participant(
+                        id=str(uuid4()),
+                        name="john doe",
+                        stream_id=stream_id,
+                    )
+                try:
+                    room_id = self.room_manager.create_room(self.participant)
+                except RoomError as err:
+                    self.send_message(stream_id, {
+                        "type": "request-error",
+                        "request_id": message.get("request_id"),
+                        "message": err.code,
+                    })
+                    return
+
                 self.send_message(stream_id, {
                     "type": "joined-room",
                     "request_id": message.get("request_id"),
-                    "room_id": "testid",
+                    "participant_id": self.participant.id,
+                    "room_id": room_id,
                 })
 
             case "leave-room":
-                # participant_id = message.get("participant_id")
-                # room_id = message.get("room_id")
-                # await self.room_manager.leave(participant_id, room_id)
-                pass
+                if self.participant is None or self.participant.room_id is None:
+                    self.send_message(stream_id, {
+                        "type": "request-error",
+                        "request_id": message.get("request_id"),
+                        "message": "participant-not-in-room",
+                    })
+                    return
+
+                room_id = self.participant.room_id
+
+                try:
+                    self.room_manager.leave_room(
+                        self.participant.id, 
+                        room_id
+                    )
+                except RoomError as err:
+                    self.send_message(stream_id, {
+                        "type": "request-error",
+                        "request_id": message.get("request_id"),
+                        "message": err.code,
+                    })
+                    return
+
+                self.send_message(stream_id, {
+                    "type": "left-room",
+                    "request_id": message.get("request_id"),
+                    "participant_id": self.participant.id,
+                    "room_id": room_id,
+                })
 
             case _:
                 print("Unknown message type:", message.get("type"))
                 self.send_message(stream_id, {
-                    "type": "error",
+                    "type": "request-error",
                     "request_id": message.get("request_id"),
                     "message": "unknown-message-type",
                 })
@@ -169,18 +214,25 @@ class WebTransportHandler:
             self.webrtc = None
 
 
-        self.room_manager.leave(self.participant.id, self.participant.room_id)
+        if self.participant is not None and self.participant.room_id is not None:
+            try:
+                self.room_manager.leave_room(
+                    self.participant.id,
+                    self.participant.room_id,
+                )
+            except RoomError:
+                pass
 
 
 class WebTransportProtocol(QuicConnectionProtocol):
     """QUIC protocol implementation for the webTransport server
     manages the signaling connection front to back end
     """
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, room_manager: RoomManager, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.http: H3Connection = None
-        self.handlers: set[WebTransportHandler] = {} # check if type hint is right
-        self.room_manager = RoomManager()
+        self.handlers: dict[int, WebTransportHandler] = {}
+        self.room_manager = room_manager
 
     def quic_event_received(self, event):
         """Function is called whenever something happens on the QUIC connection
