@@ -2,9 +2,17 @@ import { useEffect, useRef } from "react";
 
 type VideoDisplayProps = {
   stream: MediaStream | null;
-}
+  name: string;
+  muted?: boolean;
+  mirrored?: boolean;
+};
 
-function VideoDisplay({ stream }: VideoDisplayProps ) {
+function VideoDisplay({
+  stream,
+  name,
+  muted = false,
+  mirrored = false,
+}: VideoDisplayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -17,16 +25,23 @@ function VideoDisplay({ stream }: VideoDisplayProps ) {
   }, [stream]); 
 
   return (
-    <section style={{ display: "flex", justifyContent: "center" }}>
-      <video
+    <article className="video-tile">
+      {stream ? (
+        <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted
-        width={640}
-        height={480}
+        muted={muted}
+        className={mirrored ? "video--mirrored" : undefined}
       />
-    </section>
+      ) : (
+        <div className="video-placeholder">
+          <span>{name.slice(0, 1).toUpperCase()}</span>
+          <p>Camera off</p>
+        </div>
+      )}
+      <footer className="video-tile__name">{name}</footer>
+    </article>
   );
 }
 

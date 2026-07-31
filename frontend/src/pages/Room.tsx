@@ -1,9 +1,11 @@
+import VideoGrid from "../components/VideoGrid";
+
 function Room() {
-    return (
-        <main>
-            Room
-        </main>
-    );
-};
+  return (
+    <main>
+      <VideoGrid />
+    </main>
+  );
+}
 
 export default Room;

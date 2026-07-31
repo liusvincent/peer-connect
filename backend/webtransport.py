@@ -37,12 +37,12 @@ class WebTransportHandler:
     def __init__(
         self,
         connection: H3Connection,
-        stream_id: int,
+        session_id: int,
         transmit: Callable[[], None],
         room_manager: RoomManager
     ) -> None:
         self.connection = connection
-        self.stream_id = stream_id
+        self.session_id = session_id
         self.transmit = transmit
         
         self.buffer = b""
@@ -100,6 +100,20 @@ class WebTransportHandler:
                     "sdp": answer["sdp"],
                 })
 
+            case "create-id":
+                if self.participant is None:
+                    self.participant = Participant(
+                        id=str(uuid4()),
+                        name="john doe",
+                        stream_id=stream_id,
+                    )
+
+                self.send_message(stream_id, {
+                    "type": "id-answer",
+                    "request_id": message.get("request_id"),
+                    "connection_id": self.participant.id,
+                })
+
             case "join-room":
                 if self.participant is None:
                     self.participant = Participant(
@@ -125,6 +139,7 @@ class WebTransportHandler:
                     "request_id": message.get("request_id"),
                     "participant_id": self.participant.id,
                     "room_id": room_id,
+                    "participant_name": self.participant.name,
                 })
 
             case "create-room":
@@ -149,6 +164,7 @@ class WebTransportHandler:
                     "request_id": message.get("request_id"),
                     "participant_id": self.participant.id,
                     "room_id": room_id,
+                    "user_name": self.participant.name,
                 })
 
             case "leave-room":
@@ -180,6 +196,7 @@ class WebTransportHandler:
                     "request_id": message.get("request_id"),
                     "participant_id": self.participant.id,
                     "room_id": room_id,
+                    "user_name": self.participant.name,
                 })
 
             case _:
@@ -189,6 +206,12 @@ class WebTransportHandler:
                     "request_id": message.get("request_id"),
                     "message": "unknown-message-type",
                 })
+
+    # def answer_response(self, stream_id: int, response_type: str, message: dict):
+    #     self.send_message(stream_id, {
+    #         "type": response_type,
+            
+    #     })
 
     def send_message(self, stream_id: int, message: dict):
         if self.closed:
@@ -265,7 +288,7 @@ class WebTransportProtocol(QuicConnectionProtocol):
             ):
                 handler = WebTransportHandler(
                     connection=self.http,
-                    stream_id=event.stream_id,
+                    session_id=event.stream_id,
                     transmit=self.transmit,
                     room_manager = self.room_manager
                 )

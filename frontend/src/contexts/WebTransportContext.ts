@@ -1,19 +1,21 @@
 import { createContext } from "react";
+import type { ClientRequest, ServerResponse } from "../protocols";
 
-export type ConnectionStatus = "disconnected" | "connecting" | "connected";
-
-type RoomInfo = {
-    roomId: string
-}
+export type WebTransportStatus =
+  | "disconnected"
+  | "disconnecting"
+  | "connecting"
+  | "reconnecting" // reconnection still needs to be implemented
+  | "connected";
 
 type WebTransportContextValue = {
-  status: ConnectionStatus;
-  joinRoom: (roomId: string) => Promise<RoomInfo>;
-  createRoom: () => Promise<RoomInfo>;
+  status: WebTransportStatus;
+  id: string;
+
+  connect: () => Promise<void>;
   disconnect: () => Promise<void>;
+  request: (message: ClientRequest) => Promise<ServerResponse>;
 };
 
 export const WebTransportContext =
   createContext<WebTransportContextValue | null>(null);
-
-

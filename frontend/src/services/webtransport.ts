@@ -1,3 +1,8 @@
+import {
+  type ServerResponse,
+  type ClientRequest,
+} from "../protocols"
+
 // for certs purposes
 const HEXFINGERPRINT =
   "27ce3136a2b7de8cf8dc2059c21141b3179f099d0b2e829b56279ddafac132b5";
@@ -9,34 +14,14 @@ const convertHexToBytes = (hex: string): Uint8Array =>
 
 const hash: Uint8Array = convertHexToBytes(HEXFINGERPRINT);
 // end of certs
-
-type ServerMessage = 
-  | { type: "webrtc-answer"; request_id: string; sdp: string }
-  | { type: "request-error"; request_id: string; message: string }
-  | { type: "joined-room"; request_id: string; participant_id: string; room_id: string }
-  | { type: "left-room"; request_id: string; participant_id: string; room_id: string };
-
-export type ClientRequest = 
-  | { type: "webrtc-offer"; request_id: string; sdp: string }
-  | { type: "join-room"; request_id: string; room_id: string } 
-  | { type: "create-room"; request_id: string; }
-  | { type: "leave-room"; request_id: string };
   
 type PendingRequest = {
-  resolve: (message: ServerMessage) => void;
+  resolve: (message: ServerResponse) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 };
 
 const pendingRequests = new Map<string, PendingRequest>();
-
-// type MessageType = ServerMessage["type"];
-
-// type MessageHandler<T extends MessageType> = (
-//   message: Extract<ServerMessage, { type: T }>
-// ) => void;
-
-// const listeners = new Map<MessageType, Set<(message: ServerMessage) => void>>();
 
 let transport: WebTransport | null = null;
 let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -44,8 +29,8 @@ let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
 export async function connectWebTransport() {
   if (transport && writer && reader) {
-    return true;
-  } // if connection already exists
+    return;
+  } // connection already exists
   
   // clean up incomplete/stale connections
   await disconnectWebTransport();
@@ -70,22 +55,14 @@ export async function connectWebTransport() {
     reader = stream.readable.getReader();
 
     void listenForMessage(reader);
-    return true;
   } catch (err) {
-    console.error(err);
-    return false;
+    throw new Error("Establish WebTransport Connection Failed", {
+      cause: err,
+    });
   }
 }
 
-function removePendingRequest(requestId: string) {
-  const pending = pendingRequests.get(requestId);
-  if (!pending) return;
-
-  clearTimeout(pending.timeout);
-  pendingRequests.delete(requestId);
-}
-
-export async function request(message: ClientRequest) {
+export async function sendWebTransportRequest(message: ClientRequest) {
   const responsePromise = waitForResponse(message.request_id);
   try {
     await sendMessage(message);
@@ -97,19 +74,10 @@ export async function request(message: ClientRequest) {
   return responsePromise;
 }
 
-export async function sendMessage(message: object) {
-  if (!writer) {
-    throw new Error("WebTransport is not connected");
-  }
-  const encoder = new TextEncoder();
-  const json = JSON.stringify(message) + "\n";
-  await writer.write(encoder.encode(json));
-}
-
 async function waitForResponse(
   requestId: string,
   timeoutMs: number = 10_000,
-): Promise<ServerMessage> {
+): Promise<ServerResponse> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingRequests.delete(requestId);
@@ -124,20 +92,21 @@ async function waitForResponse(
   });
 }
 
-function handleMessage(message: ServerMessage) {
-  if (!message.request_id) return;
+export async function sendMessage(message: object) {
+  if (!writer) {
+    throw new Error("WebTransport is not connected");
+  }
+  const encoder = new TextEncoder();
+  const json = JSON.stringify(message) + "\n";
+  await writer.write(encoder.encode(json));
+}
 
-  const pending = pendingRequests.get(message.request_id);
+function removePendingRequest(requestId: string) {
+  const pending = pendingRequests.get(requestId);
   if (!pending) return;
 
   clearTimeout(pending.timeout);
-  pendingRequests.delete(message.request_id);
-
-  if (message.type === "request-error") {
-    pending.reject(new Error(message.message));
-  } else {
-    pending.resolve(message);
-  }
+  pendingRequests.delete(requestId);
 }
 
 export async function listenForMessage(
@@ -176,6 +145,22 @@ export async function listenForMessage(
     if (reader === currentReader) {
       await disconnectWebTransport();
     }
+  }
+}
+
+function handleMessage(message: ServerResponse) {
+  if (!message.request_id) return;
+
+  const pending = pendingRequests.get(message.request_id);
+  if (!pending) return;
+
+  clearTimeout(pending.timeout);
+  pendingRequests.delete(message.request_id);
+
+  if (message.type === "request-error") {
+    pending.reject(new Error(message.message));
+  } else {
+    pending.resolve(message);
   }
 }
 

@@ -1,34 +1,34 @@
 import { useNavigate } from "react-router-dom";
 import { useState } from "react";
-
 import JoinRoomForm from "../components/JoinRoomForm";
-import { useWebTransport } from "../hooks/useWebTransport";
+import { useRoom } from "../hooks/useRoom";
 
 function Home() {
   const navigate = useNavigate();
-  const { joinRoom, createRoom } = useWebTransport();
-  
+  const { joinLobby, createRoom } = useRoom();
+
   const [error, setError] = useState<string | null>(null);
 
-  const handleJoin = async (roomId: string) => {
+  const handleJoin = async (roomId: string, userName: string) => {
     console.log("joining room: ", roomId);
     setError(null);
 
     try {
-        const session = await joinRoom(roomId);
-        navigate(`/lobby/${encodeURIComponent(session.roomId)}`)
+      const joinedRoom = await joinLobby(roomId, userName);
+      navigate(`/lobby/${encodeURIComponent(joinedRoom.id)}`);
     } catch (err) {
-        console.error(err);
-        setError("Could not join the room")
+      console.error(err);
+      setError("Could not join the room");
     }
   };
 
-  const handleCreate = async () => {
+  const handleCreate = async (userName: string) => {
+    console.log("Creating room...");
     setError(null);
 
     try {
-      const session = await createRoom();
-      navigate(`/lobby/${encodeURIComponent(session.roomId)}`);
+      const joinedRoom = await createRoom(userName);
+      navigate(`/room/${encodeURIComponent(joinedRoom.id)}`);
     } catch (error) {
       console.error(error);
       setError("Could not create the room.");
