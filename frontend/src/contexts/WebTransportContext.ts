@@ -1,5 +1,10 @@
 import { createContext } from "react";
-import type { ClientRequest, ServerResponse } from "../protocols";
+import type {
+  ClientRequest,
+  ResponseFor,
+  ClientEvent,
+  ServerEvent,
+} from "../protocols";
 
 export type WebTransportStatus =
   | "disconnected"
@@ -8,13 +13,24 @@ export type WebTransportStatus =
   | "reconnecting" // reconnection still needs to be implemented
   | "connected";
 
+export type WebTransportUser = {
+  id: string;
+  name: string;
+};
+
 type WebTransportContextValue = {
   status: WebTransportStatus;
-  id: string;
+  user: WebTransportUser | null;
 
-  connect: () => Promise<void>;
+  connect: (userName: string) => Promise<void>;
   disconnect: () => Promise<void>;
-  request: (message: ClientRequest) => Promise<ServerResponse>;
+  request: <T extends ClientRequest>(
+    message: T,
+  ) => Promise<ResponseFor<T["type"]>>;
+  sendEvent: <T extends ClientEvent>(message: T) => Promise<void>;
+  listen: (
+    listener: (event: ServerEvent) => void | Promise<void>,
+  ) => () => void;
 };
 
 export const WebTransportContext =

@@ -5,7 +5,7 @@ type JoinRoomFormProps = {
   onCreate: (userName: string) => Promise<void>;
 };
 
-function JoinRoomForm({ onJoin, onCreate }: JoinRoomFormProps) {
+export default function JoinRoomForm({ onJoin, onCreate }: JoinRoomFormProps) {
   const [roomCode, setRoomCode] = useState("");
   const [userName, setUserName] = useState("");
 
@@ -41,5 +41,3 @@ function JoinRoomForm({ onJoin, onCreate }: JoinRoomFormProps) {
     </section>
   );
 }
-
-export default JoinRoomForm;

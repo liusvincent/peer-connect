@@ -1,32 +1,71 @@
-import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+
 import { useWebTransport } from "../hooks/useWebTransport";
+import { useRoom } from "../hooks/useRoom";
+import { useLocalMedia } from "../hooks/useLocalMedia";
 
-function Lobby() {
-  const { roomId } = useParams();
+import VideoPreview from "../components/VideoPreview";
+
+export default function Lobby() {
   const navigate = useNavigate();
-  const { disconnect } = useWebTransport();
+  const transport = useWebTransport();
+  const { room, joinRoom, leaveRoom } = useRoom();
+  const localMedia = useLocalMedia();
 
-  if (!roomId) {
+  const [lobbyError, setLobbyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!room || !transport.user) return;
+    void localMedia.start().catch(() => {});
+  }, []);
+
+  if (!room || !transport.user) {
     return <Navigate to="/" replace />;
   }
 
-  const handleEnterRoom = () => {
-    navigate(`/room/${encodeURIComponent(roomId)}`);
-  };
+  async function handleJoinRoom(): Promise<void> {
+    setLobbyError(null);
+    try {
+      const room = await joinRoom();
+      navigate(`/room/${encodeURIComponent(room.id)}`);
+    } catch (err) {
+      console.error(err);
+      setLobbyError("Could not join the room.");
+    }
+  }
 
-  const handleLeaveLobby = async () => {
-    await disconnect();
-    navigate(`/`, {replace: true});
-  };
+  async function handleLeaveLobby(): Promise<void> {
+    setLobbyError(null);
+    try {
+      await leaveRoom();
+      localMedia.stop();
+
+      navigate("/", { replace: true });
+    } catch (error) {
+      console.error(error);
+      setLobbyError("Could not leave the lobby.");
+    }
+  }
+
+  const displayedError = lobbyError ?? localMedia.error;
+
+  function closeErrorDialog(): void {
+    setLobbyError(null);
+    localMedia.clearError();
+  }
 
   return (
     <main>
-      <p>Room: {roomId}</p>
-      
-      <button onClick={handleEnterRoom}>Enter room</button>
-      <button onClick={handleLeaveLobby}>Leave lobby</button>
+      <VideoPreview name={transport.user.name} />
+      <button onClick={handleJoinRoom}>Join</button>
+      <button onClick={handleLeaveLobby}>Leave</button>
+      <dialog open={displayedError !== null}>
+        <p>{displayedError}</p>
+        {lobbyError && (
+          <button onClick={closeErrorDialog}>Close</button>
+        )}
+      </dialog>
     </main>
   );
 }
-
-export default Lobby;

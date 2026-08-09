@@ -1,89 +1,123 @@
-import { sendMessage } from "./webtransport";
+export type WebRTCSession = {
+  createOffer: (localStream: MediaStream) => Promise<string>;
+  createAnswer: (offerSdp: string) => Promise<string>;
+  applyAnswer: (sdp: string) => Promise<void>;
+  close: () => void;
+};
 
-let pc: RTCPeerConnection | null = null;
-let onPeerConnectionEnd: (() => void) | null = null;
+export type RemoteTrackInfo = {
+  track: MediaStreamTrack;
+  stream: MediaStream | null;
+  mid: string | null;
+};
 
-export async function startWebRTC(
-  onRemoteStream: (stream: MediaStream) => void,
-  onConnectionEnd: () => void,
-) {
-  if (pc && pc.connectionState !== "closed") {
-    console.log("WebRTC already started");
-    return;
-  }
+type WebRTCSessionOptions = {
+  onRemoteTrack: (media: RemoteTrackInfo) => void;
+  onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
+};
 
-  const newPc = new RTCPeerConnection();
-  pc = newPc;
-  onPeerConnectionEnd = onConnectionEnd;
+export function createWebRTCSession(
+  options: WebRTCSessionOptions,
+): WebRTCSession {
+  const pc = new RTCPeerConnection();
 
-  newPc.addEventListener("connectionstatechange", () => {
-    if (
-      newPc.connectionState === "failed" ||
-      newPc.connectionState === "closed"
-    ) {
-      closePeerConnection(newPc);
+  let started = false;
+  let closed = false;
+
+  pc.addEventListener("track", (event) => {
+    options.onRemoteTrack({
+      track: event.track,
+      stream: event.streams[0] ?? null,
+      mid: event.transceiver.mid,
+    });
+  });
+
+  pc.addEventListener("connectionstatechange", () => {
+    options.onConnectionStateChange?.(pc.connectionState);
+  });
+
+  async function createOffer(localStream: MediaStream): Promise<string> {
+    if (started) {
+      throw new Error("WebRTC session has already started");
     }
-  });
 
-  const remoteStream = new MediaStream();
+    started = true;
 
-  try {
-    newPc.addEventListener("track", (event) => {
-      remoteStream.addTrack(event.track);
-      onRemoteStream(remoteStream);
-    });
+    try {
+      for (const track of localStream.getTracks()) {
+        pc.addTrack(track, localStream);
+      }
 
-    newPc.addTransceiver("video", { direction: "recvonly" });
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-    const offer = await newPc.createOffer();
-    await newPc.setLocalDescription(offer);
+      if (!pc.localDescription) {
+        throw new Error("WebRTC local description was not created");
+      }
 
-    await sendMessage({
-      type: "webrtc-offer",
-      sdp: newPc.localDescription!.sdp,
-    });
-  } catch (err) {
-    closePeerConnection(newPc);
-    throw err;
+      return pc.localDescription.sdp;
+    } catch (err) {
+      close();
+      throw new Error("Failed to create WebRTC offer", { cause: err });
+    }
   }
-}
 
-export async function handleWebRTCAnswer(sdp: string) {
-  const currentPc = pc;
+  async function createAnswer(offerSdp: string): Promise<string> {
+    if (closed) {
+      throw new Error("WebRTC session has already closed");
+    }
 
-  if (!currentPc) {
-    throw new Error("Peer Connection has not been created");
+    try {
+      await pc.setRemoteDescription({
+        type: "offer",
+        sdp: offerSdp,
+      });
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      if (!pc.localDescription) {
+        throw new Error("WebRTC local description was not created");
+      }
+
+      return pc.localDescription.sdp;
+    } catch (err) {
+      close();
+      throw new Error("Failed to answer WebRTC offer", { cause: err });
+    }
   }
-  try {
-    await currentPc.setRemoteDescription({
-      type: "answer",
-      sdp,
-    });
-    console.log("WebRTC answer applied");
-  } catch (err) {
-    closePeerConnection(currentPc);
-    throw err;
+
+  async function applyAnswer(sdp: string): Promise<void> {
+    if (closed) {
+      throw new Error("WebRTC session has already closed");
+    }
+
+    try {
+      await pc.setRemoteDescription({
+        type: "answer",
+        sdp,
+      });
+    } catch (err) {
+      close();
+      throw new Error("Failed to apply WebRTC answer", { cause: err });
+    }
   }
-}
 
-function closePeerConnection(connection: RTCPeerConnection | null) {
-  if (!connection) return;
+  function close(): void {
+    if (closed) return;
+    closed = true;
 
-  connection.getReceivers().forEach((receiver) => {
-    receiver.track?.stop();
-  });
+    for (const receiver of pc.getReceivers()) {
+      receiver.track?.stop();
+    }
 
-  connection.close();
-
-  if (pc === connection) {
-    pc = null;
-
-    const callback = onPeerConnectionEnd;
-    onPeerConnectionEnd = null;
-    callback?.();
+    pc.close();
   }
-}
 
-export function disconnectWebRTC() {
-  closePeerConnection(pc);
+  return {
+    createOffer,
+    createAnswer,
+    applyAnswer,
+    close,
+  };
 }

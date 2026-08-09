@@ -9,8 +9,8 @@ export type WebRTCAnswerResponse = ServerResponseBase & {
   sdp: string;
 };
 
-export type CreateIdResponse = ServerResponseBase & {
-  type: "id-answer";
+export type CreateUserResponse = ServerResponseBase & {
+  type: "user-answer";
   id: string;
 };
 
@@ -36,8 +36,27 @@ export type LeftRoomResponse = ServerResponseBase & {
 
 export type ServerResponse =
   | WebRTCAnswerResponse
-  | CreateIdResponse
+  | CreateUserResponse
   | RequestErrorResponse
   | JoinedLobbyResponse
   | JoinedRoomResponse
   | LeftRoomResponse;
+
+type ServerEventBase = {
+  event_id: string;
+};
+
+export type WebRTCRenegotiationOFfer = ServerEventBase & {
+  type: "webrtc-renegotiation-offer";
+  sdp: string;
+  media: Array<{
+    mid: string;
+    participant_id: string;
+    track_id: string;
+    kind: "audio" | "video";
+  }>;
+};
+
+export type ServerEvent = WebRTCRenegotiationOFfer;
+
+export type ServerMessage = ServerResponse | ServerEvent;

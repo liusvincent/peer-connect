@@ -3,92 +3,126 @@ import { useRef, useState, type ReactNode } from "react";
 import {
   WebTransportContext,
   type WebTransportStatus,
+  type WebTransportUser,
 } from "../contexts/WebTransportContext";
 
 import {
   connectWebTransport,
   disconnectWebTransport,
   sendWebTransportRequest,
+  sendMessage,
+  addServerEventListener
 } from "../services/webtransport";
 
-import {
-  type ServerResponse,
-  type ClientRequest,
-  parseServerMessage,
+import type {
+  ResponseFor,
+  ClientRequest,
+  ClientEvent,
+  ServerEvent,
 } from "../protocols";
 
 export function WebTransportProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<WebTransportStatus>("disconnected");
-  const [id, setId] = useState<string>("");
-
-  const connectionPromiseRef = useRef<Promise<void> | null>(null);
-
-  const initializeConnection = async () => {
-    await connectWebTransport();
-
-    const message = {
-      request_id: crypto.randomUUID(),
-      type: "create-id",
-    } satisfies ClientRequest;
-
-    const rawResponse = await sendWebTransportRequest(message);
-    const response = parseServerMessage(message.type, rawResponse);
-
-    setId(response.id);
-  };
+  const [user, setUser] = useState<WebTransportUser | null>(null);
 
   const connectedRef = useRef(false);
+  const connectionPromiseRef = useRef<Promise<void> | null>(null);
 
-  const connect = async () => {
+  async function connect(userName: string): Promise<void> {
     if (connectedRef.current) return;
 
-    if (!connectionPromiseRef.current) {
-      setStatus("connecting");
-
-      connectionPromiseRef.current = initializeConnection()
-        .then(() => {
-          connectedRef.current = true;
-          setStatus("connected");
-        })
-        .catch((err) => {
-          connectedRef.current = false;
-          setStatus("disconnected");
-          throw err;
-        })
-        .finally(() => {
-          connectionPromiseRef.current = null;
-        });
+    if (connectionPromiseRef.current) {
+      return connectionPromiseRef.current;
     }
 
-    await connectionPromiseRef.current;
-  };
+    setStatus("connecting");
 
-  const disconnect = async () => {
-    setStatus("disconnecting");
+    const connectionPromise = initializeConnection(userName);
+    connectionPromiseRef.current = connectionPromise;
 
     try {
-      await disconnectWebTransport();
+      return await connectionPromise;
     } finally {
-      connectedRef.current = false;
-      connectionPromiseRef.current = null;
-      setId("");
-      setStatus("disconnected");
+      if (connectionPromiseRef.current === connectionPromise) {
+        connectionPromiseRef.current = null;
+      }
     }
-  };
+  }
 
-  const request = async (message: ClientRequest): Promise<ServerResponse> => {
-    await connect();
+  async function initializeConnection(userName: string): Promise<void> {
+    await connectWebTransport(handleClose);
+
+    try {
+      const message = {
+        request_id: crypto.randomUUID(),
+        type: "create-user",
+        user_name: userName,
+      } satisfies ClientRequest;
+
+      const response = await sendWebTransportRequest(message);
+
+      connectedRef.current = true;
+
+      setUser({ id: response.id, name: userName });
+      setStatus("connected");
+    } catch (err) {
+      await disconnectWebTransport(err);
+      throw err;
+    }
+  }
+
+  function handleClose(err?: unknown): void {
+    if (err) {
+      console.error("WebTransport Disconnected", err);
+    }
+
+    connectedRef.current = false;
+
+    setUser(null);
+    setStatus("disconnected");
+  }
+
+  async function disconnect(): Promise<void> {
+    if (!connectedRef.current && !connectionPromiseRef.current) {
+      return;
+    }
+
+    setStatus("disconnecting");
+    await disconnectWebTransport();
+  }
+
+  async function request<T extends ClientRequest>(
+    message: T,
+  ): Promise<ResponseFor<T["type"]>> {
+    if (!connectedRef.current) {
+      return Promise.reject(new Error("WebTransport is not connected"));
+    }
     return sendWebTransportRequest(message);
-  };
+  }
+
+  async function sendEvent<T extends ClientEvent>(message: T): Promise<void> {
+    if (!connectedRef.current) {
+      return Promise.reject(new Error("WebTransport is not connected"));
+    }
+    await sendMessage(message);
+  }
+
+  function listen(
+    listener: (event: ServerEvent) => void | Promise<void>,
+  ): () => void {
+    return addServerEventListener(listener);
+  }
 
   return (
     <WebTransportContext.Provider
       value={{
         status,
-        id,
+        user,
         connect,
         disconnect,
         request,
+        sendEvent,
+        listen,
       }}
     >
       {children}

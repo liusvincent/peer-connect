@@ -1,11 +1,16 @@
 import {
+  type ServerMessage,
+  type ClientMessage,
+  type ServerEvent,
   type ServerResponse,
   type ClientRequest,
-} from "../protocols"
+  type ResponseFor,
+  parseServerMessage,
+} from "../protocols";
 
-// for certs purposes
+// for certs purposes (local development)
 const HEXFINGERPRINT =
-  "27ce3136a2b7de8cf8dc2059c21141b3179f099d0b2e829b56279ddafac132b5";
+  "66C837247124F865B355E9D37FB0E18CDA291C9C311721AD5FEAFE501788501D";
 
 const convertHexToBytes = (hex: string): Uint8Array =>
   Uint8Array.from({ length: hex.length / 2 }, (_, i) =>
@@ -14,7 +19,129 @@ const convertHexToBytes = (hex: string): Uint8Array =>
 
 const hash: Uint8Array = convertHexToBytes(HEXFINGERPRINT);
 // end of certs
-  
+
+let transport: WebTransport | null = null;
+let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
+let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+type CloseHandler = (error?: unknown) => void;
+
+let closeHandler: CloseHandler | null = null;
+
+export async function connectWebTransport(onClose: CloseHandler): Promise<void> {
+  if (transport && writer && reader) {
+    return;
+  } // connection already exists
+
+  try {
+    // clean up incomplete/stale connections
+    await disconnectWebTransport();
+    closeHandler = onClose;
+
+    console.log("Creating WebTransport");
+
+    transport = new WebTransport("https://localhost:4433/wt", {
+      serverCertificateHashes: [
+        { algorithm: "sha-256", value: hash.buffer as ArrayBuffer },
+      ],
+    });
+
+    await transport.ready;
+
+    const stream = await transport.createBidirectionalStream();
+
+    writer = stream.writable.getWriter();
+    reader = stream.readable.getReader();
+
+    void listenForMessage(reader);
+  } catch (err) {
+    await disconnectWebTransport().catch((cleanupErr: unknown) => {
+      console.error("WebTransport Cleanup Failed", cleanupErr);
+    });
+    throw new Error("Establish WebTransport Connection Failed", { cause: err });
+  }
+}
+
+async function listenForMessage(
+  currentReader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  let readBuffer = "";
+  let closeError: unknown;
+  const decoder = new TextDecoder();
+
+  try {
+    while (true) {
+      const { value, done } = await currentReader.read();
+
+      if (done) {
+        console.log("WebTransport stream closed");
+        break;
+      }
+
+      if (!value) continue;
+
+      readBuffer += decoder.decode(value, { stream: true });
+
+      let newlineIndex;
+
+      while ((newlineIndex = readBuffer.indexOf("\n")) !== -1) {
+        const rawMessage = readBuffer.slice(0, newlineIndex);
+        readBuffer = readBuffer.slice(newlineIndex + 1);
+
+        if (!rawMessage.trim()) continue;
+
+        try {
+          const message = JSON.parse(rawMessage) as ServerMessage;
+          await handleMessage(message);
+        } catch (err) {
+          console.error("Invalid Server Message", err);
+        }
+      }
+    }
+  } catch (err) {
+    closeError = err;
+  } finally {
+    if (reader === currentReader) {
+      await disconnectWebTransport(closeError);
+    }
+  }
+}
+
+async function handleMessage(
+  message: ServerMessage,
+): Promise<void> {
+  if ("request_id" in message) {
+    handleResponse(message);
+    return;
+  }
+
+  await handleEvent(message);
+}
+
+type ServerEventListener = (
+  event: ServerEvent,
+) => void | Promise<void>;
+
+const serverEventListeners = new Set<ServerEventListener>();
+
+export function addServerEventListener(
+  handler: ServerEventListener,
+): () => void {
+  serverEventListeners.add(handler);
+
+  return () => {
+    serverEventListeners.delete(handler);
+  };
+}
+
+async function handleEvent(
+  event: ServerEvent,
+): Promise<void> {
+  for (const listener of serverEventListeners) {
+    await listener(event);
+  }
+}
+
 type PendingRequest = {
   resolve: (message: ServerResponse) => void;
   reject: (error: Error) => void;
@@ -23,61 +150,44 @@ type PendingRequest = {
 
 const pendingRequests = new Map<string, PendingRequest>();
 
-let transport: WebTransport | null = null;
-let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+function handleResponse(message: ServerResponse): void {
+  if (!message.request_id) return;
 
-export async function connectWebTransport() {
-  if (transport && writer && reader) {
+  const pending = pendingRequests.get(message.request_id);
+  if (!pending) return;
+
+  removePendingRequest(message.request_id);
+
+  if (message.type === "request-error") {
+    pending.reject(new Error(message.message));
     return;
-  } // connection already exists
-  
-  // clean up incomplete/stale connections
-  await disconnectWebTransport();
-
-  try {
-    console.log("Creating WebTransport");
-    const currentTransport = new WebTransport("https://localhost:4433/wt", {
-      serverCertificateHashes: [
-        {
-          algorithm: "sha-256",
-          value: hash.buffer as ArrayBuffer,
-        },
-      ],
-    });
-
-    await currentTransport.ready;
-
-    const stream = await currentTransport.createBidirectionalStream();
-
-    transport = currentTransport
-    writer = stream.writable.getWriter();
-    reader = stream.readable.getReader();
-
-    void listenForMessage(reader);
-  } catch (err) {
-    throw new Error("Establish WebTransport Connection Failed", {
-      cause: err,
-    });
   }
+
+  pending.resolve(message);
 }
 
-export async function sendWebTransportRequest(message: ClientRequest) {
+export async function sendWebTransportRequest<T extends ClientRequest>(
+  message: T,
+): Promise<ResponseFor<T["type"]>> {
   const responsePromise = waitForResponse(message.request_id);
+
   try {
     await sendMessage(message);
-  } catch (err) {
+    const response = await responsePromise;
+    return parseServerMessage<T["type"]>(message.type, response);
+  } finally {
     removePendingRequest(message.request_id);
-    throw err;
   }
-  
-  return responsePromise;
 }
 
 async function waitForResponse(
   requestId: string,
   timeoutMs: number = 10_000,
 ): Promise<ServerResponse> {
+  if (pendingRequests.has(requestId)) {
+    return Promise.reject(new Error(`Duplicate request ID: ${requestId}`));
+  }
+
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pendingRequests.delete(requestId);
@@ -87,21 +197,22 @@ async function waitForResponse(
     pendingRequests.set(requestId, {
       resolve,
       reject,
-      timeout
+      timeout,
     });
   });
 }
 
-export async function sendMessage(message: object) {
+export async function sendMessage(message: ClientMessage): Promise<void> {
   if (!writer) {
     throw new Error("WebTransport is not connected");
   }
-  const encoder = new TextEncoder();
-  const json = JSON.stringify(message) + "\n";
-  await writer.write(encoder.encode(json));
+  const encodedMessage = new TextEncoder().encode(
+    `${JSON.stringify(message)}\n`,
+  );
+  await writer.write(encodedMessage);
 }
 
-function removePendingRequest(requestId: string) {
+function removePendingRequest(requestId: string): void {
   const pending = pendingRequests.get(requestId);
   if (!pending) return;
 
@@ -109,76 +220,33 @@ function removePendingRequest(requestId: string) {
   pendingRequests.delete(requestId);
 }
 
-export async function listenForMessage(
-  currentReader: ReadableStreamDefaultReader<Uint8Array>,
-) {
-  let readBuffer = "";
-  const decoder = new TextDecoder();
-
-  try {
-    while (true) {
-      const { value, done } = await currentReader.read();
-      if (done) {
-        console.log("WebTransport stream closed");
-        break;
-      }
-      if (!value) continue;
-      readBuffer += decoder.decode(value, { stream: true });
-
-      let newlineIndex;
-      while ((newlineIndex = readBuffer.indexOf("\n")) !== -1) {
-        const rawMessage = readBuffer.slice(0, newlineIndex);
-        readBuffer = readBuffer.slice(newlineIndex + 1);
-        if (!rawMessage.trim()) continue;
-
-        try {
-          const message = JSON.parse(rawMessage);
-          handleMessage(message);
-        } catch (err) {
-          console.error(err);
-        }
-      }
-    }
-  } catch (err) {
-    console.error(err);
-  } finally {
-    if (reader === currentReader) {
-      await disconnectWebTransport();
-    }
-  }
-}
-
-function handleMessage(message: ServerResponse) {
-  if (!message.request_id) return;
-
-  const pending = pendingRequests.get(message.request_id);
-  if (!pending) return;
-
-  clearTimeout(pending.timeout);
-  pendingRequests.delete(message.request_id);
-
-  if (message.type === "request-error") {
-    pending.reject(new Error(message.message));
-  } else {
-    pending.resolve(message);
-  }
-}
-
-export async function disconnectWebTransport() {
+export async function disconnectWebTransport(err?: unknown): Promise<void> {
   const oldReader = reader;
   const oldWriter = writer;
   const oldTransport = transport;
+  const oldCloseHandler = closeHandler;
 
   reader = null;
   writer = null;
   transport = null;
+  closeHandler = null;
 
-  await Promise.allSettled([
-    oldReader?.cancel(),
-    oldWriter?.close(),
-  ]);
+  rejectPendingRequests(new Error("WebTransport disconnected", { cause: err }));
+
+  await Promise.allSettled([oldReader?.cancel(), oldWriter?.close()]);
 
   oldReader?.releaseLock();
   oldWriter?.releaseLock();
   oldTransport?.close();
+
+  oldCloseHandler?.(err);
+}
+
+function rejectPendingRequests(err: Error): void {
+  for (const pending of pendingRequests.values()) {
+    clearTimeout(pending.timeout);
+    pending.reject(err);
+  }
+
+  pendingRequests.clear();
 }

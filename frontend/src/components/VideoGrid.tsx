@@ -1,21 +1,42 @@
+import { useCallMedia } from "../hooks/useCallMedia";
+import { useLocalMedia } from "../hooks/useLocalMedia"
+import { useWebTransport } from "../hooks/useWebTransport"
+import { useRoom } from "../hooks/useRoom"
+
 import VideoDisplay from "../components/VideoDisplay";
 
-function VideoGrid() {
+export default function VideoGrid() {
+  const callMedia = useCallMedia();
+  const localMedia = useLocalMedia();
+  const { room } = useRoom();
+  const transport = useWebTransport();
+
   return (
-    <main>
-      <div className="video-grid">
-        {participants.map(participant) => (
-            <VideoDisplay 
-              key={participant.id}
-              stream={participant.stream}
-              name={participant.name}
-              muted={participant.isLocal}
-              mirrored={participant.isLocal}
-            />
-        )}
-      </div>
-    </main>
+    <section className="video-grid">
+      <VideoDisplay
+        stream={localMedia.stream}
+        name={transport.user?.name ?? "You"}
+        muted
+        mirrored
+        cameraEnabled={localMedia.cameraEnabled}
+      />
+
+      {callMedia.remoteMedia.map(({ participantId, stream }) => {
+        const participant = room?.participants[participantId];
+
+        const hasLiveVideo = stream
+          .getVideoTracks()
+          .some((track) => track.readyState === "live");
+
+        return (
+          <VideoDisplay
+            key={participantId}
+            stream={stream}
+            name={participant?.name ?? participantId}
+            cameraEnabled={hasLiveVideo}
+          />
+        );
+      })}
+    </section>
   );
 }
-
-export default VideoGrid;

@@ -8,8 +8,9 @@ from aioquic.asyncio import serve
 import asyncio
 from functools import partial
 
-from webtransport import WebTransportProtocol
+from webtransport_protocol import WebTransportProtocol
 from rooms import RoomManager
+
 
 # front
 # app = FastAPI()
@@ -25,7 +26,7 @@ async def main():
 
     room_manager = RoomManager()
 
-    await serve(
+    server = await serve(
         host=host,
         port=port,
         configuration=configuration,
@@ -36,7 +37,11 @@ async def main():
     )
     print(f"WebTransport Server running on https://{host}:{port}/wt")
 
-    await asyncio.Future()
+    try:
+        await asyncio.Event().wait()
+    finally:
+        print("Shutting down WebTransport Server...")
+        server.close()
 
 
 if __name__ == "__main__":

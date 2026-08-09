@@ -8,7 +8,6 @@ export type Participant = {
 
 export type Room = {
   id: string;
-  participant_ids: string[];
-  lobby_ids: string[];
-  participants: Participant[];
+  lobby: Record<string, Participant>;
+  participants: Record<string, Participant>;
 };

@@ -7,20 +7,19 @@ export type WebRTCOfferRequest = ClientRequestBase & {
   sdp: string;
 };
 
-export type CreateIdRequest = ClientRequestBase & {
-  type: "create-id";
+export type CreateUserRequest = ClientRequestBase & {
+  type: "create-user";
+  user_name: string;
 };
 
 export type CreateRoomRequest = ClientRequestBase & {
   type: "create-room";
-  user_name: string;
 };
 
-export type JoinLobbyRequest = ClientRequestBase& {
+export type JoinLobbyRequest = ClientRequestBase & {
   type: "join-lobby";
   room_id: string;
-  user_name: string;
-}
+};
 
 export type JoinRoomRequest = ClientRequestBase & {
   type: "join-room";
@@ -28,37 +27,29 @@ export type JoinRoomRequest = ClientRequestBase & {
 
 export type LeaveRoomRequest = ClientRequestBase & {
   type: "leave-room";
-  room_id: string;
 };
-
-// export type AdmitParticipant = ClientRequestBase & {
-//   type: "admit-participant";
-//   room_id: string;
-//   participant_id: string;
-// }
-
-// export type DenyParticipant = ClientRequestBase & {
-//   type: "deny-participant";
-//   room_id: string;
-//   participant_id: string;
-// }
-
-// export type KickParticipant = ClientRequestBase & {
-//   type: "kick-participant";
-//   room_id: string;
-//   participant_id: string;
-// }
-
-// export type ToggleMuteParticipant = ClientRequestBase & {
-//   type: "toggle-mute-participant";
-//   room_id: string;
-//   participant_id: string;
-// }
 
 export type ClientRequest =
   | WebRTCOfferRequest
-  | CreateIdRequest
-  | JoinRoomRequest
-  | JoinLobbyRequest
+  | CreateUserRequest
   | CreateRoomRequest
+  | JoinLobbyRequest
+  | JoinRoomRequest
   | LeaveRoomRequest;
+
+type ClientEventBase = {
+  event_id: string;
+};
+
+export type WebRTCRenegotiationAnswer = ClientEventBase & {
+  type: "webrtc-renegotiation-answer";
+  sdp: string;
+};
+
+export type WebRTCReady = ClientEventBase & {
+  type: "webrtc-ready";
+};
+
+export type ClientEvent = WebRTCRenegotiationAnswer | WebRTCReady;
+
+export type ClientMessage = ClientRequest | ClientEvent;

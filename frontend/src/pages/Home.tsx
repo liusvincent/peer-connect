@@ -3,32 +3,30 @@ import { useState } from "react";
 import JoinRoomForm from "../components/JoinRoomForm";
 import { useRoom } from "../hooks/useRoom";
 
-function Home() {
+export default function Home() {
   const navigate = useNavigate();
   const { joinLobby, createRoom } = useRoom();
 
   const [error, setError] = useState<string | null>(null);
 
-  const handleJoin = async (roomId: string, userName: string) => {
-    console.log("joining room: ", roomId);
+  async function handleJoin(roomId: string, userName: string): Promise<void> {
     setError(null);
 
     try {
-      const joinedRoom = await joinLobby(roomId, userName);
-      navigate(`/lobby/${encodeURIComponent(joinedRoom.id)}`);
+      const room = await joinLobby(roomId, userName);
+      navigate(`/lobby/${encodeURIComponent(room.id)}`);
     } catch (err) {
       console.error(err);
       setError("Could not join the room");
     }
   };
 
-  const handleCreate = async (userName: string) => {
-    console.log("Creating room...");
+  async function handleCreate(userName: string): Promise<void> {
     setError(null);
 
     try {
-      const joinedRoom = await createRoom(userName);
-      navigate(`/room/${encodeURIComponent(joinedRoom.id)}`);
+      const room = await createRoom(userName);
+      navigate(`/room/${encodeURIComponent(room.id)}`);
     } catch (error) {
       console.error(error);
       setError("Could not create the room.");
@@ -38,9 +36,10 @@ function Home() {
   return (
     <main>
       <JoinRoomForm onJoin={handleJoin} onCreate={handleCreate} />
-      {error && <p role="alert">{error}</p>}
+      <dialog open={!!error}>
+        <p>{error}</p>
+        <button onClick={() => setError(null)}>Close</button>
+      </dialog>
     </main>
   );
 }
-
-export default Home;

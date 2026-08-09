@@ -1,57 +1,80 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+
 import { useWebTransport } from "../hooks/useWebTransport";
 import { RoomContext } from "../contexts/RoomContext";
+
 import type { Room } from "../types/room";
-import { type ClientRequest, parseServerMessage } from "../protocols";
+import type { ClientRequest } from "../protocols";
 
 export function RoomProvider({ children }: { children: ReactNode }) {
   const transport = useWebTransport();
 
   const [room, setRoom] = useState<Room | null>(null);
 
-  const createRoom = async (userName: string): Promise<Room> => {
+  const activeRoom = transport.status === "disconnected" ? null : room;
+
+  function ensureDisconnected(): void {
+    if (transport.status !== "disconnected") {
+      throw new Error("You are already in a room session");
+    }
+  }
+
+  async function createRoom(userName: string): Promise<Room> {
+    ensureDisconnected();
+
+    await transport.connect(userName);
+
     const message = {
       request_id: crypto.randomUUID(),
       type: "create-room",
-      user_name: userName,
     } satisfies ClientRequest;
 
-    const rawResponse = await transport.request(message);
-    const response = parseServerMessage(message.type, rawResponse);
+    try {
+      const response = await transport.request(message);
 
-    setRoom(response.room);
-    return response.room;
-  };
+      setRoom(response.room);
+      return response.room;
+    } catch (err) {
+      await transport.disconnect();
+      throw err;
+    }
+  }
 
-  const joinLobby = async (roomId: string, userName: string): Promise<Room> => {
+  async function joinLobby(roomId: string, userName: string): Promise<Room> {
+    ensureDisconnected();
+
+    await transport.connect(userName);
+
     const message = {
       request_id: crypto.randomUUID(),
       type: "join-lobby",
       room_id: roomId,
-      user_name: userName,
     } satisfies ClientRequest;
 
-    const rawResponse = await transport.request(message);
-    const response = parseServerMessage(message.type, rawResponse);
+    try {
+      const response = await transport.request(message);
 
-    setRoom(response.room);
-    return response.room;
-  };
+      setRoom(response.room);
+      return response.room;
+    } catch (err) {
+      await transport.disconnect();
+      throw err;
+    }
+  }
 
-  const joinRoom = async (): Promise<Room> => {
+  async function joinRoom(): Promise<Room> {
     const message = {
       request_id: crypto.randomUUID(),
       type: "join-room",
     } satisfies ClientRequest;
 
-    const rawResponse = await transport.request(message);
-    const response = parseServerMessage(message.type, rawResponse);
+    const response = await transport.request(message);
 
     setRoom(response.room);
     return response.room;
-  };
+  }
 
-  const leaveRoom = async () => {
+  async function leaveRoom() {
     if (!room) {
       throw new Error("Not currently in a room");
     }
@@ -59,20 +82,18 @@ export function RoomProvider({ children }: { children: ReactNode }) {
     const message = {
       request_id: crypto.randomUUID(),
       type: "leave-room",
-      room_id: room.id,
     } satisfies ClientRequest;
 
-    const rawResponse = await transport.request(message);
-    parseServerMessage(message.type, rawResponse);
+    await transport.request(message);
 
     setRoom(null);
     await transport.disconnect();
-  };
+  }
 
   return (
     <RoomContext.Provider
       value={{
-        room,
+        room: activeRoom,
         createRoom,
         joinRoom,
         joinLobby,

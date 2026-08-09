@@ -5,38 +5,43 @@ type VideoDisplayProps = {
   name: string;
   muted?: boolean;
   mirrored?: boolean;
+  cameraEnabled?: boolean;
 };
 
-function VideoDisplay({
+export default function VideoDisplay({
   stream,
   name,
   muted = false,
   mirrored = false,
+  cameraEnabled = true,
 }: VideoDisplayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || !cameraEnabled) return;
     video.srcObject = stream;
     return () => {
       video.srcObject = null;
     };
-  }, [stream]); 
+  }, [stream, cameraEnabled]);
+
+  const showVideo = stream && cameraEnabled;
+  const initial = name.trim().charAt(0).toUpperCase() || "?";
 
   return (
     <article className="video-tile">
-      {stream ? (
+      {showVideo ? (
         <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted={muted}
-        className={mirrored ? "video--mirrored" : undefined}
-      />
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted={muted}
+          className={mirrored ? "video--mirrored" : undefined}
+        />
       ) : (
         <div className="video-placeholder">
-          <span>{name.slice(0, 1).toUpperCase()}</span>
+          <span>{initial}</span>
           <p>Camera off</p>
         </div>
       )}
@@ -44,5 +49,3 @@ function VideoDisplay({
     </article>
   );
 }
-
-export default VideoDisplay;

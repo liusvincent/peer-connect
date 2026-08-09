@@ -1,11 +1,3 @@
-export type {
-  ClientRequest,
-} from "./clientMessages";
-
-export type {
-  ServerResponse,
-} from "./serverMessages";
-
-export {
-  parseServerMessage,
-} from "./parseServerMessage";
+export type { ClientRequest, ClientEvent, ClientMessage } from "./clientMessages";
+export type { ServerResponse, ServerEvent, ServerMessage } from "./serverMessages";
+export { parseServerMessage, type ResponseFor } from "./parseServerMessage";

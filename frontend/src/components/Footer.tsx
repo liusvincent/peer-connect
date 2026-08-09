@@ -1,21 +1,19 @@
 import { useWebTransport } from "../hooks/useWebTransport";
 
-function Footer() {
-  const { status: webTransportStatus, roomSession } = useWebTransport();
+export default function Footer() {
+  const transport = useWebTransport();
 
   return (
     <footer>
       <p>
-        WebTransport Connection: <span>{webTransportStatus}</span>
+        WebTransport Connection: <span>{transport.status}</span>
         <br />
-        Participant ID: <span>{roomSession?.participantId ?? "—"}</span>
+        {/* RTCPeerConnection State : <span>{}</span> */}
+        {/* <br /> */}
+        Participant ID: <span>{transport.user?.id ?? "—"}</span>
         <br />
-        Room ID: <span>{roomSession?.roomId ?? "—"}</span>
-        <br />
-        User Name: <span>{roomSession?.userName ?? "—"}</span>
+        Display Name: <span>{transport.user?.name ?? "—"}</span>
       </p>
     </footer>
   );
 }
-
-export default Footer;

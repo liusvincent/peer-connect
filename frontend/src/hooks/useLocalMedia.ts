@@ -1,40 +1,14 @@
-import { useEffect, useState } from "react";
+import { useContext } from "react";
+import { LocalMediaContext } from "../contexts/LocalMediaContext";
 
 export function useLocalMedia() {
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const context = useContext(LocalMediaContext);
 
-  useEffect(() => {
-    let disposed = false;
-    let acquiredStream: MediaStream | null = null;
+  if (!context) {
+    throw new Error(
+      "useLocalMedia must be used inside LocalMediaProvider",
+    );
+  }
 
-    async function startCamera() {
-      try {
-        acquiredStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        });
-
-        if (disposed) {
-          acquiredStream.getTracks().forEach((track) => track.stop());
-          return;
-        }
-
-        setStream(acquiredStream);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Could not access camera",
-        );
-      }
-    }
-
-    void startCamera();
-
-    return () => {
-      disposed = true;
-      acquiredStream?.getTracks().forEach((track) => track.stop());
-    };
-  }, []);
-
-  return { stream, error };
+  return context;
 }
