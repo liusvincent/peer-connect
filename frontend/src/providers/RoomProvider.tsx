@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { useWebTransport } from "../hooks/useWebTransport";
 import { RoomContext } from "../contexts/RoomContext";
 
-import type { Room } from "../types/room";
+import type { Room } from "../types/models";
 import type { ClientRequest } from "../protocols";
 
 export function RoomProvider({ children }: { children: ReactNode }) {

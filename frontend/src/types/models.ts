@@ -11,3 +11,13 @@ export type Room = {
   lobby: Record<string, Participant>;
   participants: Record<string, Participant>;
 };
+
+export type MediaHint = {
+  participant_id: string;
+  track_id: string;
+  kind: "audio" | "video";
+};
+
+export type MediaInfo = MediaHint & {
+  mid: string;
+};

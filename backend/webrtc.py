@@ -8,11 +8,14 @@ import asyncio
 
 
 @dataclass(frozen=True)
-class OutgoingMediaInfo:
-    mid: str
+class OutgoingMediaHint:
     participant_id: str
     track_id: str
     kind: str
+
+@dataclass(frozen=True)
+class OutgoingMediaInfo(OutgoingMediaHint):
+    mid: str 
 
 class WebRTCSession:
     def __init__(
@@ -52,7 +55,7 @@ class WebRTCSession:
             if self.pc.connectionState in ("failed", "closed"):
                 await self.close()
 
-    async def handle_initial_offer(self, sdp: str) -> str:
+    async def handle_offer(self, sdp: str) -> tuple[str, list[OutgoingMediaInfo]]:
         """ Handle the offer created by the browser 
         returns the sdp answer
         """
@@ -66,9 +69,11 @@ class WebRTCSession:
             answer = await self.pc.createAnswer()
             await self.pc.setLocalDescription(answer)
 
-            return self.pc.localDescription.sdp
+            media = self._get_outgoing_media()
 
-    def add_remote_participant_track(
+            return self.pc.localDescription.sdp, media
+
+    async def add_remote_participant_track(
         self, 
         publisher_id: str, 
         track_id: str,
@@ -77,102 +82,79 @@ class WebRTCSession:
         """ Attach another participant's track
         affects outgoing_senders
         """
-        key = (publisher_id, track_id)
+        async with self.negotiation_lock:
+            if self.closed:
+                raise RuntimeError("WebRTC session is closed")
 
-        if key in self.outgoing_senders:
-            return False
+            key = (publisher_id, track_id)
 
-        self.outgoing_senders[key] = self.pc.addTrack(track)
-        return True
+            if key in self.outgoing_senders:
+                return False
+
+            self.outgoing_senders[key] = self.pc.addTrack(track)
+            return True
 
     async def remove_remote_participant_track(
         self,
         publisher_id: str,
         track_id: str,
     ) -> bool:
-        key = (publisher_id, track_id)
-        sender = self.outgoing_senders.pop(key, None)
-
-        if sender is None:
-            return False
-
-        old_track = sender.track
-        sender.replaceTrack(None)
-
-        for transceiver in self.pc.getTransceivers():
-            if transceiver.sender is sender:
-                await transceiver.stop()
-                break
-
-        if old_track is not None:
-            old_track.stop()
-
-        return True
-
-    async def create_renegotiation_offer(self) -> tuple[str, list[OutgoingMediaInfo]]:
-        """ Create an offer after outgoing tracks have been added
-        """
         async with self.negotiation_lock:
             if self.closed:
                 raise RuntimeError("WebRTC session is closed")
+            
+            key = (publisher_id, track_id)
+            sender = self.outgoing_senders.pop(key, None)
 
-            if self.pc.signalingState != "stable":
-                raise RuntimeError(
-                    f"Cannot negotiate while signaling state is "
-                    f"{self.pc.signalingState!r}"
-                )
+            if sender is None:
+                return False
 
-            offer = await self.pc.createOffer()
-            await self.pc.setLocalDescription(offer)
+            old_track = sender.track
+            sender.replaceTrack(None)
 
-            media = self.get_outgoing_media()
+            for transceiver in self.pc.getTransceivers():
+                if transceiver.sender is sender:
+                    await transceiver.stop()
+                    break
 
-            return self.pc.localDescription.sdp, media
+            if old_track is not None:
+                old_track.stop()
 
-    async def apply_renegotiation_answer(self, sdp: str) -> None:
-        """ Apply the browser's answer to a server-created offer
-        """
-        async with self.negotiation_lock:
-            if self.closed:
-                raise RuntimeError("WebRTC session is closed")
-
-            await self.pc.setRemoteDescription(
-                RTCSessionDescription(sdp=sdp, type="answer")
-            )
+            return True
 
     async def close(self) -> None:
-        if self.closed:
-            return
+        async with self.negotiation_lock:
+            if self.closed:
+                return
 
-        self.closed = True
-        track_ids = list(self.incoming_tracks)
-        self.incoming_tracks.clear()
-        self.outgoing_senders.clear()
+            self.closed = True
+            track_ids = list(self.incoming_tracks)
+            self.incoming_tracks.clear()
+            self.outgoing_senders.clear()
 
-        await self.pc.close()
+            await self.pc.close()
 
-        await asyncio.gather(
-            *(self.track_ended_callback(track_id) for track_id in track_ids),
-            return_exceptions=True,
-        )
+            await asyncio.gather(
+                *(self.track_ended_callback(track_id) for track_id in track_ids),
+                return_exceptions=True,
+            )
 
-    def get_outgoing_media(self) -> list[OutgoingMediaInfo]:
-        media: list[OutgoingMediaInfo] = []
-
+    def _get_outgoing_media(self) -> list[OutgoingMediaInfo]:
         transceiver_by_sender = {
             id(transceiver.sender): transceiver
             for transceiver in self.pc.getTransceivers()
         }
 
+        media = []
+
         for (participant_id, track_id), sender in self.outgoing_senders.items():
+            track = sender.track
+            if track is None:
+                continue
+
             transceiver = transceiver_by_sender.get(id(sender))
 
             if transceiver is None or transceiver.mid is None:
-                continue
-
-            track = sender.track
-
-            if track is None:
                 continue
 
             media.append(
@@ -185,3 +167,22 @@ class WebRTCSession:
             )
 
         return media
+
+    def _get_media_hints(self) -> list[OutgoingMediaHint]:
+        hints = []
+
+        for (participant_id, track_id), sender in self.outgoing_senders.items():
+            track = sender.track
+
+            if track is None:
+                continue
+
+            hints.append(
+                OutgoingMediaHint(
+                    participant_id=participant_id,
+                    track_id=track_id,
+                    kind=track.kind,
+                )
+            )
+
+        return hints

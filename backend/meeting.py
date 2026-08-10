@@ -1,0 +1,304 @@
+from messages import (
+    ClientRequest, ServerResponse, ServerMessage,
+    CreateRoomRequest, CreateUserRequest,
+    JoinLobbyRequest, JoinedLobbyResponse,
+    JoinRoomRequest, JoinedRoomResponse,
+    LeaveRoomRequest, LeftRoomResponse,
+    RequestErrorResponse, WebRTCOfferRequest, 
+    WebRTCAnswerResponse, WebRTCOfferNeeded,
+    CreateUserResponse, MediaSubscriptionInfo,
+    MediaSubscriptionHint
+)
+
+from rooms import Participant, RoomManager
+from aiortc import MediaStreamTrack
+from webrtc import WebRTCSession
+from typing import Callable
+from uuid import uuid4
+
+
+class MeetingError(Exception):
+    code = "meeting-error"
+
+class UserAlreadyCreated(MeetingError):
+    code = "user-already-created"
+
+class UserNotCreated(MeetingError):
+    code = "user-not-created"
+
+class UserNotInRoom(MeetingError):
+    code = "user-not-in-room"
+
+class WebRTCUnavailable(MeetingError):
+    code = "webrtc-unavailable"
+
+
+class MeetingHandler:
+    """ Handler for meeting logic
+    """
+    def __init__(
+        self, 
+        room_manager: RoomManager,
+        send_message: Callable[[ServerMessage], None],
+        participant: Participant | None = None, 
+        webrtc: WebRTCSession | None = None,
+    ) -> None:
+        self.room_manager = room_manager
+        self.participant = participant
+        self.webrtc = webrtc
+        self.media_ready = False
+
+        self.send_message = send_message
+
+    async def handle_not_implemented(self, request: ClientRequest) -> ServerResponse:
+        return RequestErrorResponse(
+            request_id=request.request_id,
+            message=f"{request.type}-not-implemented",
+        )
+
+    def _require_participant(self) -> Participant:
+        participant = self.participant
+
+        if participant is None:
+            raise UserNotCreated()
+
+        return participant
+
+
+    def _require_participant_in_room(self) -> tuple[Participant, str]:
+        participant = self._require_participant()
+
+        if participant.room_id is None:
+            raise UserNotInRoom()
+
+        return participant, participant.room_id
+
+    def _require_webrtc(self) -> WebRTCSession:
+        webrtc = self.webrtc
+
+        if webrtc is None or webrtc.closed:
+            raise WebRTCUnavailable()
+
+        return webrtc
+
+    async def handle_webrtc_offer(self, request: ClientRequest) -> ServerResponse:
+        assert isinstance(request, WebRTCOfferRequest)
+
+        if self.webrtc is None or self.webrtc.closed:
+            self.webrtc = WebRTCSession(self._publish_track, self._unpublish_track)
+
+        try:
+            answer_sdp, outgoing_media = await self.webrtc.handle_offer(request.sdp)
+        except Exception:
+            await self.webrtc.close()
+            raise
+
+        return WebRTCAnswerResponse(
+            request_id=request.request_id,
+            sdp=answer_sdp,
+            media_info=outgoing_media
+        )
+
+    async def _publish_track(self, track: MediaStreamTrack):
+        """ Callback helper function: for WebRTCSession
+        If an incoming track arrives from this participant,
+        Publish it to the other participants in room
+        """
+        if not self.media_ready:
+            return
+
+        participant, room_id = self._require_participant_in_room()
+
+        await self.room_manager.publish_track(
+            participant_id=participant.id,
+            room_id=room_id,
+            track=track,
+        )
+
+    async def _unpublish_track(self, track_id: str) -> None:
+        """ Callback helper function: for WebRTCSession
+        """
+        if not self.media_ready:
+            return
+
+        participant, room_id = self._require_participant_in_room()
+
+        await self.room_manager.unpublish_track(
+            participant_id=participant.id,
+            room_id=room_id,
+            track_id=track_id,
+        )
+
+    async def handle_create_user(self, request: ClientRequest) -> ServerResponse:
+        assert isinstance(request, CreateUserRequest)
+
+        if self.participant:
+            raise UserAlreadyCreated()
+
+        user_id = str(uuid4())
+        user_name = request.user_name
+
+        self.participant = Participant(
+            id=user_id,
+            name=user_name,
+            on_track_published=self._subscribe_to_track,
+            on_track_unpublished=self._unsubscribe_from_track,
+        )
+
+        return CreateUserResponse(
+            request_id=request.request_id,
+            id=user_id,
+        )
+
+    async def _subscribe_to_track(
+        self,
+        publisher_id: str,
+        track_id: str,
+        track: MediaStreamTrack,
+    ) -> None:
+        """ Callback helper function: for Participant
+        if another participant in room has published a track,
+        this participant should receive it
+        """
+        webrtc = self._require_webrtc()
+
+        added = await webrtc.add_remote_participant_track(
+            publisher_id=publisher_id,
+            track_id=track_id,
+            track=track,
+        )
+
+        if added:
+            self.send_message(
+                WebRTCOfferNeeded(
+                    event_id=str(uuid4()),
+                    media_hint = webrtc._get_media_hints()
+                )
+            )
+
+    async def _unsubscribe_from_track(
+        self,
+        publisher_id: str,
+        track_id: str,
+    ) -> None:
+        """ Callback helper function: for Participant
+        """
+        webrtc = self._require_webrtc()
+
+        removed = await webrtc.remove_remote_participant_track(
+            publisher_id,
+            track_id,
+        )
+
+        if removed:
+            self.send_message(
+                WebRTCOfferNeeded(
+                    event_id=str(uuid4()),
+                    media_hint = webrtc._get_media_hints()
+                )
+            )
+
+    async def handle_webrtc_ready(self) -> None:
+        if self.media_ready:
+            return
+
+        participant, room_id = self._require_participant_in_room()
+        webrtc = self._require_webrtc()
+
+        
+        await self.room_manager.activate_participant_media(
+            participant_id=participant.id,
+            room_id=room_id,
+            incoming_tracks=list(webrtc.incoming_tracks.values())
+        )
+
+        self.media_ready = True
+
+    async def handle_join_lobby(self, request: ClientRequest) -> ServerResponse:
+        assert isinstance(request, JoinLobbyRequest)
+
+        participant = self._require_participant()
+
+        room = self.room_manager.join_room(
+            participant,
+            request.room_id,
+        )
+
+        return JoinedLobbyResponse(
+            request_id=request.request_id,
+            room=room,
+        )
+
+
+    async def handle_join_room(self, request: ClientRequest) -> ServerResponse:
+        assert isinstance(request, JoinRoomRequest)
+
+        participant, room_id = self._require_participant_in_room()
+
+        room = await self.room_manager.admit_participant(
+            participant.id,
+            room_id,
+        )
+
+        return JoinedRoomResponse(
+            request_id=request.request_id,
+            room=room,
+        )
+
+
+    async def handle_create_room(self, request: ClientRequest) -> ServerResponse:
+        assert isinstance(request, CreateRoomRequest)
+
+        participant = self._require_participant()
+
+        room = self.room_manager.create_room(
+            participant,
+        )
+
+        return JoinedRoomResponse(
+            request_id=request.request_id,
+            room=room,
+        )
+
+
+    async def handle_leave_room(self, request: ClientRequest) -> ServerResponse:
+        assert isinstance(request, LeaveRoomRequest)
+
+        participant, room_id = self._require_participant_in_room()
+
+        await self.room_manager.leave_room(
+            participant.id,
+            room_id,
+        )
+
+        await self.close()
+
+        return LeftRoomResponse(
+            request_id=request.request_id,
+            room_id=room_id,
+        )
+
+    async def close(self) -> None:
+        participant = self.participant
+        webrtc = self.webrtc
+        room_id = participant.room_id if participant else None
+
+        self.media_ready = False
+
+        self.webrtc = None
+        self.participant = None 
+
+        if participant and room_id:
+            await self.room_manager.leave_room(
+                participant_id=participant.id,
+                room_id=room_id,
+            )
+
+        try:
+            if webrtc is not None:
+                await webrtc.close()
+        except Exception:
+            raise
+        
+
+        

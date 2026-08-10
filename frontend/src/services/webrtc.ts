@@ -1,9 +1,4 @@
-export type WebRTCSession = {
-  createOffer: (localStream: MediaStream) => Promise<string>;
-  createAnswer: (offerSdp: string) => Promise<string>;
-  applyAnswer: (sdp: string) => Promise<void>;
-  close: () => void;
-};
+import type { MediaHint } from "../types/models";
 
 export type RemoteTrackInfo = {
   track: MediaStreamTrack;
@@ -16,12 +11,17 @@ type WebRTCSessionOptions = {
   onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
 };
 
-export function createWebRTCSession(
-  options: WebRTCSessionOptions,
-): WebRTCSession {
+export interface WebRTCSession {
+  addLocalStream: (localStream: MediaStream) => void;
+  addReceivingTransceivers: (media: MediaHint[]) => void;
+  createOffer: () => Promise<string>;
+  applyAnswer: (sdp: string) => Promise<void>;
+  close: () => void;
+};
+
+export function createWebRTCSession(options: WebRTCSessionOptions): WebRTCSession {
   const pc = new RTCPeerConnection();
 
-  let started = false;
   let closed = false;
 
   pc.addEventListener("track", (event) => {
@@ -36,18 +36,48 @@ export function createWebRTCSession(
     options.onConnectionStateChange?.(pc.connectionState);
   });
 
-  async function createOffer(localStream: MediaStream): Promise<string> {
-    if (started) {
-      throw new Error("WebRTC session has already started");
+  let localStreamAdded = false;
+
+  function addLocalStream(localStream: MediaStream): void {
+    if (closed) {
+      throw new Error("WebRTC session has already closed");
     }
 
-    started = true;
+    if (localStreamAdded) {
+      return;
+    }
+    
+    for (const track of localStream.getTracks()) {
+      pc.addTrack(track, localStream);
+    }
 
-    try {
-      for (const track of localStream.getTracks()) {
-        pc.addTrack(track, localStream);
+    localStreamAdded = true;
+  }
+
+  const preparedSubscriptions = new Set<string>();
+
+  function addReceivingTransceivers(media: MediaHint[]): void {
+    if (closed) {
+      throw new Error("WebRTC session has already closed");
+    }
+
+    for (const item of media) {
+      const key = `${item.participant_id}:${item.track_id}`;
+
+      if (preparedSubscriptions.has(key)) {
+        continue;
       }
 
+      pc.addTransceiver(item.kind, {
+        direction: "recvonly",
+      });
+
+      preparedSubscriptions.add(key);
+    }
+  }
+
+  async function createOffer(): Promise<string> {
+    try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
@@ -59,31 +89,6 @@ export function createWebRTCSession(
     } catch (err) {
       close();
       throw new Error("Failed to create WebRTC offer", { cause: err });
-    }
-  }
-
-  async function createAnswer(offerSdp: string): Promise<string> {
-    if (closed) {
-      throw new Error("WebRTC session has already closed");
-    }
-
-    try {
-      await pc.setRemoteDescription({
-        type: "offer",
-        sdp: offerSdp,
-      });
-
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      if (!pc.localDescription) {
-        throw new Error("WebRTC local description was not created");
-      }
-
-      return pc.localDescription.sdp;
-    } catch (err) {
-      close();
-      throw new Error("Failed to answer WebRTC offer", { cause: err });
     }
   }
 
@@ -105,6 +110,7 @@ export function createWebRTCSession(
 
   function close(): void {
     if (closed) return;
+    
     closed = true;
 
     for (const receiver of pc.getReceivers()) {
@@ -115,8 +121,9 @@ export function createWebRTCSession(
   }
 
   return {
+    addLocalStream,
+    addReceivingTransceivers,
     createOffer,
-    createAnswer,
     applyAnswer,
     close,
   };

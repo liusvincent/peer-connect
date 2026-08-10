@@ -1,5 +1,5 @@
 import { createContext } from "react";
-import type { Room } from "../types/room"
+import type { Room } from "../types/models"
 
 type RoomContextValue = {
   room: Room | null;

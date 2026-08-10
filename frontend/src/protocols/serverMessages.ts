@@ -1,4 +1,4 @@
-import type { Room } from "../types/room";
+import type { Room, MediaHint, MediaInfo } from "../types/models";
 
 type ServerResponseBase = {
   request_id: string;
@@ -7,6 +7,7 @@ type ServerResponseBase = {
 export type WebRTCAnswerResponse = ServerResponseBase & {
   type: "webrtc-answer";
   sdp: string;
+  media_info: MediaInfo[];
 };
 
 export type CreateUserResponse = ServerResponseBase & {
@@ -46,17 +47,11 @@ type ServerEventBase = {
   event_id: string;
 };
 
-export type WebRTCRenegotiationOFfer = ServerEventBase & {
-  type: "webrtc-renegotiation-offer";
-  sdp: string;
-  media: Array<{
-    mid: string;
-    participant_id: string;
-    track_id: string;
-    kind: "audio" | "video";
-  }>;
-};
+export type WebRTCOfferNeeded = ServerEventBase & {
+  type: "webrtc-offer-needed";
+  media_hint: MediaHint[];
+}
 
-export type ServerEvent = WebRTCRenegotiationOFfer;
+export type ServerEvent = WebRTCOfferNeeded;
 
 export type ServerMessage = ServerResponse | ServerEvent;

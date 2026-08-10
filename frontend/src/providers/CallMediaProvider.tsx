@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
+import type { ClientRequest, ServerEvent } from "../protocols";
+
 import { useWebTransport } from "../hooks/useWebTransport";
 import { useLocalMedia } from "../hooks/useLocalMedia";
+
+import {
+  type CallMediaStatus,
+  type RemoteParticipantMedia,
+  type RemoteSubscription,
+  CallMediaContext,
+} from "../contexts/CallMediaContext";
 
 import {
   type WebRTCSession,
@@ -9,27 +18,11 @@ import {
   createWebRTCSession,
 } from "../services/webrtc";
 
-import type { ClientRequest, ServerEvent } from "../protocols";
-
-import {
-  type CallMediaStatus,
-  type RemoteParticipantMedia,
-  CallMediaContext,
-} from "../contexts/CallMediaContext";
-
-type RemoteSubscription = {
-  participantId: string;
-  trackId: string;
-  kind: "audio" | "video";
-  track: MediaStreamTrack | null;
-}
-
 export function CallMediaProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<CallMediaStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [remoteMedia, setRemoteMedia] = useState<RemoteParticipantMedia[]>([]);
-  const [connectionState, setConnectionState] =
-    useState<RTCPeerConnectionState | null>(null);
+  const [connectionState, setConnectionState] = useState<RTCPeerConnectionState | null>(null);
 
   const transport = useWebTransport();
   const localMedia = useLocalMedia();
@@ -48,8 +41,21 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    return transport.listen(handleRenegotiation)
+    return transport.listen(handleWebRTCOfferNeeded)
   }, [transport]);
+
+  const negotiationRef = useRef<Promise<void>>(Promise.resolve());
+
+  function handleWebRTCOfferNeeded(event: ServerEvent): void {
+    if (event.type !== "webrtc-offer-needed")
+      return
+
+    negotiationRef.current = negotiationRef.current
+      .then(() => renegotiate(event))
+      .catch((err) => {
+        console.error("WebRTC renegotiation failed", err);
+      });
+  }
 
   async function start(): Promise<WebRTCSession> {
     if (sessionRef.current) {
@@ -91,7 +97,9 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     try {
       const localStream = localMedia.stream ?? (await localMedia.start());
 
-      const offerSdp = await session.createOffer(localStream);
+      session.addLocalStream(localStream)
+
+      const offerSdp = await session.createOffer();
 
       const message = {
         request_id: crypto.randomUUID(),
@@ -100,6 +108,19 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
       } satisfies ClientRequest;
 
       const answer = await transport.request(message);
+
+      remoteByMidRef.current = new Map(
+        answer.media_info.map((item) => [
+          item.mid,
+          {
+            participantId: item.participant_id,
+            trackId: item.track_id,
+            kind: item.kind,
+            track: null,
+          },
+        ]),
+      );
+
 
       await session.applyAnswer(answer.sdp);
 
@@ -115,22 +136,30 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  function stop(): void {
+    const session = sessionRef.current;
+    resetSession(session);
+    session?.close();
+  }
+
   function handleRemoteTrack(media: RemoteTrackInfo): void {
-    if (!media.mid) {
-      return;
-    }
+    if (!media.mid) return;
 
-    const remote = remoteByMidRef.current.get(media.mid);
-    if (!remote) return;
+    const subscription = remoteByMidRef.current.get(media.mid);
+    if (!subscription) return;
 
-    remote.track = media.track
+    subscription.track = media.track;
 
     setRemoteMedia((current) =>
-      addParticipantTrack(current, remote.participantId, media.track),
+      addTrackToParticipant(
+        current,
+        subscription.participantId,
+        media.track,
+      ),
     );
   }
 
-  function addParticipantTrack(
+  function addTrackToParticipant(
     current: RemoteParticipantMedia[],
     participantId: string,
     track: MediaStreamTrack,
@@ -156,13 +185,11 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     return [...current];
   }
 
-  function stop(): void {
-    const session = sessionRef.current;
-    resetSession(session);
-    session?.close();
-  }
-
   function handleConnectionStateChange(state: RTCPeerConnectionState): void {
+    if (!sessionRef.current) {
+      return;
+    }
+    
     setConnectionState(state);
 
     if (state === "connected") {
@@ -215,82 +242,53 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function handleRenegotiation(event: ServerEvent): Promise<void> {
-    console.log("received server event", event);
-    if (event.type !== "webrtc-renegotiation-offer")
-      return
-
+  async function renegotiate(event: ServerEvent): Promise<void> {
     const session = sessionRef.current;
+    
     if (!session) {
       return;
     }
 
-    const previous = remoteByMidRef.current;
-    const next = new Map<string, RemoteSubscription>();
+    try {
+      session.addReceivingTransceivers(event.media_hint);
 
-    for (const item of event.media) {
-      const existing = previous.get(item.mid);
+      const offerSdp = await session.createOffer();
 
-      const sameSubscription =
-        existing?.participantId === item.participant_id &&
-        existing.trackId === item.track_id;
+      const message = {
+        request_id: event.event_id,
+        type: "webrtc-offer",
+        sdp: offerSdp,
+      } satisfies ClientRequest;
 
-      next.set(item.mid, {
-        participantId: item.participant_id,
-        trackId: item.track_id,
-        kind: item.kind,
-        track: sameSubscription ? existing.track : null,
-      });
-    }
+      const answer = await transport.request(message);
 
-    const removedTracks = new Set<MediaStreamTrack>();
+      const previous = remoteByMidRef.current;
 
-    for (const [mid, previousSubscription] of previous) {
-      if (!previousSubscription.track) {
-        continue;
-      }
+      remoteByMidRef.current = new Map(
+        answer.media_info.map((item) => {
+          const existing = previous.get(item.mid);
 
-      const nextSubscription = next.get(mid);
+          const sameSubscription =
+            existing?.participantId === item.participant_id &&
+            existing.trackId === item.track_id;
 
-      if (nextSubscription?.track !== previousSubscription.track) {
-        removedTracks.add(previousSubscription.track);
-      }
-    }
-
-    remoteByMidRef.current = next;
-
-    if (removedTracks.size > 0) {
-      setRemoteMedia((current) =>
-        current.flatMap((participant) => {
-          const remainingTracks = participant.stream
-            .getTracks()
-            .filter((track) => !removedTracks.has(track));
-
-          if (remainingTracks.length === 0) {
-            return [];
-          }
-
-          return [{
-            ...participant,
-            stream: new MediaStream(remainingTracks),
-          }];
+          return [
+            item.mid,
+            {
+              participantId: item.participant_id,
+              trackId: item.track_id,
+              kind: item.kind,
+              track: sameSubscription ? existing.track : null,
+            },
+          ];
         }),
       );
-
-      for (const track of removedTracks) {
-        track.stop();
-      }
+        
+      await session.applyAnswer(answer.sdp);
+    } catch (err) {
+      stop()
+      throw err
     }
-
-    const answerSdp = await session.createAnswer(event.sdp);
-    console.log("created renegotiation answer");
-
-    await transport.sendEvent({
-      type: "webrtc-renegotiation-answer",
-      event_id: event.event_id,
-      sdp: answerSdp,
-    });
-    console.log("sent renegotiation answer");
   }
 
   return (

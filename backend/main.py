@@ -8,7 +8,7 @@ from aioquic.asyncio import serve
 import asyncio
 from functools import partial
 
-from webtransport_protocol import WebTransportProtocol
+from webtransport import WebTransportProtocol
 from rooms import RoomManager
 
 

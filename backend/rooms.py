@@ -10,7 +10,6 @@ from uuid import uuid4
 import asyncio
 
 
-# Error Handling
 class RoomError(Exception):
     code = "room-error"
 
@@ -27,7 +26,6 @@ class ParticipantNotFound(RoomError):
     code = "participant-not-found" 
 
 
-# Participant 
 class Role(StrEnum):
     HOST = "host"
     CO = "co"
@@ -50,14 +48,16 @@ class Participant:
     ) = None
 
 
-# Room
 class Room:
+    """ Room Logic Handler
+    """
     def __init__(self, room_id: str) -> None:
         self.id = room_id
         self.participants: dict[str, Participant] = {}
         self.lobby: dict[str, Participant] = {}
 
         self.published_tracks: dict[tuple[str, str], MediaStreamTrack] = {}
+        self.media_participants: set[str] = set()
         self.relay = MediaRelay()
 
     def _ensure_can_join(self, participant: Participant) -> None:
@@ -96,6 +96,8 @@ class Room:
         if participant is None:
             raise ParticipantNotFound(participant_id)
 
+        self.media_participants.discard(participant_id)
+
         published_keys = [
             key for key in self.published_tracks
             if key[0] == participant_id
@@ -122,6 +124,7 @@ class Room:
             participant.room_id = None
             participant.role = Role.MEMBER
 
+        self.media_participants.clear()
         self.participants.clear()
         self.lobby.clear()
 
@@ -144,6 +147,9 @@ class Room:
         subscribers = list(self.participants.items())
         for subscriber_id, subscriber in subscribers:
             if subscriber_id == publisher_id:
+                continue   
+
+            if subscriber_id not in self.media_participants:
                 continue
 
             relayed_track = self.relay.subscribe(track)
@@ -174,6 +180,9 @@ class Room:
             if subscriber_id == publisher_id:
                 continue
 
+            if subscriber_id not in self.media_participants:
+                continue
+
             callbacks.append( 
                 subscriber.on_track_unpublished(
                     publisher_id, track_id
@@ -187,7 +196,7 @@ class Room:
         participant_id: str,
         incoming_tracks: list[MediaStreamTrack],
     ) -> None:
-        """ Catch up:
+        """ Catch up: Initialization
         Publish your tracks
         and suscribe to your remote peer tracks
         """
@@ -195,6 +204,8 @@ class Room:
 
         if participant is None:
             raise ParticipantNotFound(participant_id)
+
+        self.media_participants.add(participant_id)
 
         for track in incoming_tracks:
             await self.publish_track(participant_id, track)
@@ -222,8 +233,9 @@ class Room:
         pass
 
 
-#  Room Manager
 class RoomManager:
+    """ Handles all room on the server
+    """
     def __init__(self) -> None:
         self.rooms: dict[str, Room] = {}
 

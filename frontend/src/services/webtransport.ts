@@ -1,14 +1,15 @@
-import {
-  type ServerMessage,
-  type ClientMessage,
-  type ServerEvent,
-  type ServerResponse,
-  type ClientRequest,
-  type ResponseFor,
-  parseServerMessage,
+import { parseServerMessage } from "../protocols";
+
+import type {
+  ServerMessage,
+  ClientMessage,
+  ServerEvent,
+  ServerResponse,
+  ClientRequest,
+  ResponseFor,
 } from "../protocols";
 
-// for certs purposes (local development)
+// For certs purposes (local development) /////////////////////////////////
 const HEXFINGERPRINT =
   "66C837247124F865B355E9D37FB0E18CDA291C9C311721AD5FEAFE501788501D";
 
@@ -18,20 +19,20 @@ const convertHexToBytes = (hex: string): Uint8Array =>
   );
 
 const hash: Uint8Array = convertHexToBytes(HEXFINGERPRINT);
-// end of certs
+//////////////////////////////////////////////////////////////////////////
 
 let transport: WebTransport | null = null;
 let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
-type CloseHandler = (error?: unknown) => void;
+type CloseProviderHandler = (error?: unknown) => void;
 
-let closeHandler: CloseHandler | null = null;
+let closeHandler: CloseProviderHandler | null = null;
 
-export async function connectWebTransport(onClose: CloseHandler): Promise<void> {
+export async function connectWebTransport(onClose: CloseProviderHandler): Promise<void> {
   if (transport && writer && reader) {
     return;
-  } // connection already exists
+  }
 
   try {
     // clean up incomplete/stale connections
@@ -124,7 +125,7 @@ type ServerEventListener = (
 
 const serverEventListeners = new Set<ServerEventListener>();
 
-export function addServerEventListener(
+export function listenToServerEvent(
   handler: ServerEventListener,
 ): () => void {
   serverEventListeners.add(handler);

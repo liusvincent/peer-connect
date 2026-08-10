@@ -11,7 +11,14 @@ export type CallMediaStatus =
 export type RemoteParticipantMedia = { 
   participantId: string;
   stream: MediaStream;
-}; // have a feeling I might need to move this to the types folder
+};
+
+export type RemoteSubscription = {
+  participantId: string;
+  trackId: string;
+  kind: "audio" | "video";
+  track: MediaStreamTrack | null;
+}
 
 type CallMediaContextValue = {
   status: CallMediaStatus;

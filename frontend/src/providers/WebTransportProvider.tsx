@@ -11,7 +11,7 @@ import {
   disconnectWebTransport,
   sendWebTransportRequest,
   sendMessage,
-  addServerEventListener
+  listenToServerEvent
 } from "../services/webtransport";
 
 import type {
@@ -110,7 +110,7 @@ export function WebTransportProvider({ children }: { children: ReactNode }) {
   function listen(
     listener: (event: ServerEvent) => void | Promise<void>,
   ): () => void {
-    return addServerEventListener(listener);
+    return listenToServerEvent(listener);
   }
 
   return (

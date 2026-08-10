@@ -1,8 +1,11 @@
+""" File for standardized messaging over the WebTransport
+"""
+
 from typing import Annotated, Literal
 from pydantic import BaseModel, Field, TypeAdapter, ConfigDict
 
+# Shared Model
 
-# Shared Models
 class ParticipantInfo(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -17,8 +20,20 @@ class RoomInfo(BaseModel):
     participants: dict[str, ParticipantInfo]
     lobby: dict[str, ParticipantInfo]
 
+class MediaSubscriptionHint(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-# Client Messages
+    participant_id: str
+    track_id: str
+    kind: Literal["audio", "video"]
+
+class MediaSubscriptionInfo(MediaSubscriptionHint):
+    model_config = ConfigDict(from_attributes=True)
+
+    mid: str
+
+# Client Request
+
 class ClientRequestBase(BaseModel):
     request_id: str
 
@@ -53,29 +68,28 @@ ClientRequest = Annotated[
     Field(discriminator="type"),
 ]
 
+# Client Event
+
 class ClientEventBase(BaseModel):
     event_id: str
-
-class WebRTCRenegotiationAnswer(ClientEventBase):
-    type: Literal["webrtc-renegotiation-answer"]
-    sdp: str
 
 class WebRTCReady(ClientEventBase):
     type: Literal["webrtc-ready"] = "webrtc-ready"
 
 ClientEvent = Annotated[
-    WebRTCRenegotiationAnswer
-    | WebRTCReady,
+    WebRTCReady,
     Field(discriminator="type"),
 ]
+
+# Client Message
 
 ClientMessage = Annotated[
     ClientRequest | ClientEvent,
     Field(discriminator="type")
 ]
 
+# Server Resopnse
 
-# Server Messages
 class ServerResponseBase(BaseModel):
     request_id: str
 
@@ -86,6 +100,7 @@ class RequestErrorResponse(ServerResponseBase):
 class WebRTCAnswerResponse(ServerResponseBase):
     type: Literal["webrtc-answer"] = "webrtc-answer"
     sdp: str
+    media_info: list[MediaSubscriptionInfo]
 
 class CreateUserResponse(ServerResponseBase):
     type: Literal["user-answer"] = "user-answer"
@@ -113,32 +128,33 @@ ServerResponse = Annotated[
     Field(discriminator="type"),
 ]
 
+# Server Event
+
 class ServerEventBase(BaseModel):
     event_id: str
 
-class MediaSubscriptionInfo(BaseModel):
-    mid: str
-    participant_id: str
-    track_id: str
-    kind: Literal["audio", "video"]
-
-class WebRTCRenegotiationOffer(ServerEventBase):
-    type: Literal["webrtc-renegotiation-offer"] = "webrtc-renegotiation-offer"
-    sdp: str
-    media: list[MediaSubscriptionInfo]
+class WebRTCOfferNeeded(ServerEventBase):
+    type: Literal["webrtc-offer-needed"] = "webrtc-offer-needed"
+    media_hint: list[MediaSubscriptionHint]
 
 ServerEvent = Annotated[
-    WebRTCRenegotiationOffer,
+    WebRTCOfferNeeded,
     Field(discriminator="type")
 ]
+
+# Server Message
+
+class MessageErrorResponse(BaseModel):
+    type: Literal["message-error"] = "message-error"
+    message: str
 
 ServerMessage = Annotated[
-    ServerResponse | ServerEvent,
+    ServerResponse | ServerEvent | MessageErrorResponse,
     Field(discriminator="type")
 ]
 
-
 # Helper Functions
+
 client_message_adapter = TypeAdapter(ClientMessage)
 
 def parse_client_message(data: object) -> ClientMessage:
