@@ -131,14 +131,27 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
 
       return session;
     } catch (err) {
-      stop();
+      if (sessionRef.current === session) {
+        stop();
+      } else {
+        session.close();
+      }
       throw err;
     }
   }
 
   function stop(): void {
     const session = sessionRef.current;
-    resetSession(session);
+    if (sessionRef.current === session) {
+      sessionRef.current = null;
+      remoteByMidRef.current.clear();
+      startPromiseRef.current = null;
+
+      setStatus("idle");
+      setConnectionState(null);
+      setRemoteMedia([]);
+    }
+
     session?.close();
   }
 

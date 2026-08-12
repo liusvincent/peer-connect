@@ -24,6 +24,10 @@ export default function Room() {
     void callMedia.start().catch((err) => {
       console.error("Could not start the call", err);
     });
+
+    return () => {
+      callMedia.stop()
+    }
   }, []);
 
   if (!room || !transport.user) {

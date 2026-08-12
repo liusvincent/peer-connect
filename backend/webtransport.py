@@ -91,6 +91,7 @@ class WebTransportSession:
 
     async def dispatch_message(self, raw_message: bytes) -> None:
         message = parse_client_message(json.loads(raw_message))
+        print(message.type)
 
         match message:
             case WebRTCReady():

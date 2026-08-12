@@ -38,14 +38,9 @@ class Participant:
     room_id: str | None = None
     role: Role = Role.MEMBER
 
-    on_track_published: (
-        Callable[[str, str, MediaStreamTrack], Awaitable[None]] | None
-    ) = None
-
-    on_track_unpublished: (
-        Callable[[str, str], Awaitable[None]]
-        | None
-    ) = None
+    on_track_published: Callable[[str, str, MediaStreamTrack], Awaitable[None]] | None = None
+    on_track_unpublished: Callable[[str, str], Awaitable[None]] | None = None
+    on_negotiation_needed: Callable[[], None] | None = None
 
 
 class Room:
@@ -103,11 +98,21 @@ class Room:
             if key[0] == participant_id
         ]
 
+        affected = set()
+
         for publisher_id, track_id in published_keys:
-            await self.unpublish_track(
-                publisher_id,
-                track_id,
+            affected.update( 
+                await self.unpublish_track(
+                    publisher_id,
+                    track_id,
+                )
             )
+
+        for participant_id in affected:
+            participant = self.participants.get(participant_id)
+            
+            if participant and participant.on_negotiation_needed:
+                participant.on_negotiation_needed()
 
         participant.room_id = None
         participant.role = Role.MEMBER
@@ -128,17 +133,21 @@ class Room:
         self.participants.clear()
         self.lobby.clear()
 
-    async def publish_track(self, publisher_id: str, track: MediaStreamTrack) -> None:
+    async def publish_track(
+        self, publisher_id: str, track: MediaStreamTrack
+    ) -> set[str]:
         """ For all participants (subscribers) create a proxy track
         then add the proxy track to their webrtc
         """
+        affected = set()
+
         if publisher_id not in self.participants:
             raise ParticipantNotFound(publisher_id)
 
         key = (publisher_id, track.id)
 
         if key in self.published_tracks:
-            return
+            return affected
 
         self.published_tracks[key] = track
 
@@ -162,16 +171,21 @@ class Room:
                 )
             )
 
-        await asyncio.gather(*callbacks)
+            affected.add(subscriber_id)
 
-    async def unpublish_track(self, publisher_id: str, track_id: str) -> None:
+        await asyncio.gather(*callbacks)
+        return affected
+
+    async def unpublish_track(self, publisher_id: str, track_id: str) -> set[str]:
         """ For all participants remove the publisher's relayed track
         """
+        affected = set()
+
         key = (publisher_id, track_id)
         track = self.published_tracks.pop(key, None)
 
         if track is None:
-            return
+            return affected
 
         callbacks = []
 
@@ -189,7 +203,10 @@ class Room:
                 )
             )
 
+            affected.add(subscriber_id)
+
         await asyncio.gather(*callbacks)
+        return affected
 
     async def activate_participant_media(
         self,
@@ -207,16 +224,29 @@ class Room:
 
         self.media_participants.add(participant_id)
 
+        affected = set()
+
         for track in incoming_tracks:
-            await self.publish_track(participant_id, track)
+            affected.update(await self.publish_track(participant_id, track))
 
-        await self._subscribe_to_existing_tracks(participant)
+        subscribed = await self._subscribe_to_existing_tracks(participant)
 
-    async def _subscribe_to_existing_tracks(self, subscriber: Participant) -> None:
+        if subscribed:
+            affected.add(participant.id)
+
+        for participant_id in affected:
+            participant = self.participants.get(participant_id)
+
+            if participant and participant.on_negotiation_needed:
+                participant.on_negotiation_needed()
+
+    async def _subscribe_to_existing_tracks(self, subscriber: Participant) -> bool:
         """ For all published track,
         subscribe to each one of them unless it's yours
         """
+        subscribed = False
         published_tracks = list(self.published_tracks.items())
+
         for (publisher_id, track_id), track in published_tracks:
             if publisher_id == subscriber.id:
                 continue
@@ -228,6 +258,10 @@ class Room:
                 track_id,
                 relayed_track,
             )
+
+            subscribed = True
+
+        return subscribed
 
     def broadcast() -> None:
         pass

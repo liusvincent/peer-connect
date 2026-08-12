@@ -6,8 +6,7 @@ from messages import (
     LeaveRoomRequest, LeftRoomResponse,
     RequestErrorResponse, WebRTCOfferRequest, 
     WebRTCAnswerResponse, WebRTCOfferNeeded,
-    CreateUserResponse, MediaSubscriptionInfo,
-    MediaSubscriptionHint
+    CreateUserResponse
 )
 
 from rooms import Participant, RoomManager
@@ -143,6 +142,7 @@ class MeetingHandler:
             name=user_name,
             on_track_published=self._subscribe_to_track,
             on_track_unpublished=self._unsubscribe_from_track,
+            on_negotiation_needed=self._request_negotiation
         )
 
         return CreateUserResponse(
@@ -162,19 +162,11 @@ class MeetingHandler:
         """
         webrtc = self._require_webrtc()
 
-        added = await webrtc.add_remote_participant_track(
+        await webrtc.add_remote_participant_track(
             publisher_id=publisher_id,
             track_id=track_id,
             track=track,
         )
-
-        if added:
-            self.send_message(
-                WebRTCOfferNeeded(
-                    event_id=str(uuid4()),
-                    media_hint = webrtc._get_media_hints()
-                )
-            )
 
     async def _unsubscribe_from_track(
         self,
@@ -185,18 +177,20 @@ class MeetingHandler:
         """
         webrtc = self._require_webrtc()
 
-        removed = await webrtc.remove_remote_participant_track(
+        await webrtc.remove_remote_participant_track(
             publisher_id,
             track_id,
         )
 
-        if removed:
-            self.send_message(
-                WebRTCOfferNeeded(
-                    event_id=str(uuid4()),
-                    media_hint = webrtc._get_media_hints()
-                )
+    def _request_negotiation(self) -> None:
+        webrtc = self._require_webrtc()
+
+        self.send_message(
+            WebRTCOfferNeeded(
+                event_id=str(uuid4()),
+                media_hint=webrtc._get_media_hints(),
             )
+        )
 
     async def handle_webrtc_ready(self) -> None:
         if self.media_ready:
@@ -299,6 +293,5 @@ class MeetingHandler:
                 await webrtc.close()
         except Exception:
             raise
-        
 
         
