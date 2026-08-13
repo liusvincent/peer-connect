@@ -1,12 +1,12 @@
+from __future__ import annotations
+
 from aiortc.contrib.media import MediaRelay
 from aiortc import MediaStreamTrack
 
 from typing import Callable, Awaitable
-
 from dataclasses import dataclass
 from enum import StrEnum
 from uuid import uuid4
-
 import asyncio
 
 
@@ -41,6 +41,7 @@ class Participant:
     on_track_published: Callable[[str, str, MediaStreamTrack], Awaitable[None]] | None = None
     on_track_unpublished: Callable[[str, str], Awaitable[None]] | None = None
     on_negotiation_needed: Callable[[], None] | None = None
+    on_room_updated: Callable[[Room], None] | None = None
 
 
 class Room:
@@ -108,11 +109,7 @@ class Room:
                 )
             )
 
-        for participant_id in affected:
-            participant = self.participants.get(participant_id)
-            
-            if participant and participant.on_negotiation_needed:
-                participant.on_negotiation_needed()
+        self.request_negotiation(affected)
 
         participant.room_id = None
         participant.role = Role.MEMBER
@@ -234,11 +231,7 @@ class Room:
         if subscribed:
             affected.add(participant.id)
 
-        for participant_id in affected:
-            participant = self.participants.get(participant_id)
-
-            if participant and participant.on_negotiation_needed:
-                participant.on_negotiation_needed()
+        self.request_negotiation(affected)
 
     async def _subscribe_to_existing_tracks(self, subscriber: Participant) -> bool:
         """ For all published track,
@@ -262,6 +255,26 @@ class Room:
             subscribed = True
 
         return subscribed
+
+    def request_negotiation(self, participant_ids: set[str]) -> None:
+        for participant_id in participant_ids:
+            participant = self.participants.get(participant_id)
+
+            if participant and participant.on_negotiation_needed:
+                participant.on_negotiation_needed()
+
+    def notify_room_updated(self, *, exclude_id: str | None = None) -> None:
+        recipients = [
+            *self.participants.values(),
+            *self.lobby.values(),
+        ]
+
+        for participant in recipients:
+            if participant.id == exclude_id:
+                continue
+
+            if participant.on_room_updated:
+                participant.on_room_updated(self)
 
     def broadcast() -> None:
         pass
@@ -298,11 +311,16 @@ class RoomManager:
             return room # repeated join
             
         room.add_to_lobby(participant)
+        room.notify_room_updated(exclude_id=participant.id)
+
         return room
 
     async def admit_participant(self, participant_id: str, room_id: str) -> Room:
         room = self._get_room(room_id)
+
         await room.admit_participant(participant_id)
+        room.notify_room_updated(exclude_id=participant_id)
+        
         return room
 
     async def leave_room(self, participant_id: str, room_id: str) -> None:
@@ -311,6 +329,8 @@ class RoomManager:
 
         if room.has_no_participants(): 
             self.close_room(room_id)
+        else:
+            room.notify_room_updated()
 
     def close_room(self, room_id: str) -> None:
         room = self._get_room(room_id)
@@ -321,9 +341,13 @@ class RoomManager:
         participant_id: str, 
         room_id: str,
         track: MediaStreamTrack,
-    ) -> None:
+    ) -> None:        
         room = self._get_room(room_id)
-        await room.publish_track(participant_id, track)
+
+        affected = await room.publish_track(participant_id, track)
+
+        room.request_negotiation(affected)
+
 
     async def unpublish_track(
         self,
@@ -333,10 +357,12 @@ class RoomManager:
     ) -> None:
         room = self._get_room(room_id)
 
-        await room.unpublish_track(
+        affected = await room.unpublish_track(
             participant_id,
             track_id,
         )
+
+        room.request_negotiation(affected)
 
     async def activate_participant_media(
         self,

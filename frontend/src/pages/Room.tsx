@@ -43,8 +43,8 @@ export default function Room() {
   }
 
   async function handleLeaveRoom(): Promise<void> {
-    await leaveRoom();
     navigate(`/`, { replace: true });
+    await leaveRoom();
   }
 
   return (

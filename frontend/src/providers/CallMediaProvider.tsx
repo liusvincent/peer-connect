@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import type { ClientRequest, ServerEvent } from "../protocols";
+import type { ClientRequest, ServerEvent, WebRTCOfferNeeded } from "../protocols";
 
 import { useWebTransport } from "../hooks/useWebTransport";
 import { useLocalMedia } from "../hooks/useLocalMedia";
@@ -48,7 +48,7 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
 
   function handleWebRTCOfferNeeded(event: ServerEvent): void {
     if (event.type !== "webrtc-offer-needed")
-      return
+      return;
 
     negotiationRef.current = negotiationRef.current
       .then(() => renegotiate(event))
@@ -163,6 +163,21 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
 
     subscription.track = media.track;
 
+    media.track.addEventListener(
+      "ended",
+      () => {
+        if (subscription.track === media.track) {
+          subscription.track = null;
+        }
+
+        removeRemoteTrack(
+          subscription.participantId,
+          media.track,
+        );
+      },
+      { once: true },
+    );
+
     setRemoteMedia((current) =>
       addTrackToParticipant(
         current,
@@ -196,6 +211,24 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     }
 
     return [...current];
+  }
+
+  function removeRemoteTrack(participantId: string, track: MediaStreamTrack): void {
+    setRemoteMedia((current) =>
+      current.flatMap((participant) => {
+        if (participant.participantId !== participantId) {
+          return [participant];
+        }
+
+        participant.stream.removeTrack(track);
+
+        if (participant.stream.getTracks().length === 0) {
+          return [];
+        }
+
+        return [{ ...participant }];
+      }),
+    );
   }
 
   function handleConnectionStateChange(state: RTCPeerConnectionState): void {
@@ -255,7 +288,7 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function renegotiate(event: ServerEvent): Promise<void> {
+  async function renegotiate(event: WebRTCOfferNeeded): Promise<void> {
     const session = sessionRef.current;
     
     if (!session) {
@@ -263,7 +296,7 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      session.addReceivingTransceivers(event.media_hint);
+      session.handleReceivingTransceivers(event.media_hint);
 
       const offerSdp = await session.createOffer();
 
@@ -277,13 +310,32 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
 
       const previous = remoteByMidRef.current;
 
+      const previousByKey = new Map(
+        [...previous.values()].map((subscription) => [
+          `${subscription.participantId}:${subscription.trackId}`,
+          subscription,
+        ]),
+      );
+
+      const activeKeys = new Set(
+        answer.media_info.map(
+          (item) => `${item.participant_id}:${item.track_id}`,
+        ),
+      );
+
+      for (const [key, subscription] of previousByKey) {
+        if (!activeKeys.has(key) && subscription.track) {
+          removeRemoteTrack(
+            subscription.participantId,
+            subscription.track,
+          );
+        }
+      }
+
       remoteByMidRef.current = new Map(
         answer.media_info.map((item) => {
-          const existing = previous.get(item.mid);
-
-          const sameSubscription =
-            existing?.participantId === item.participant_id &&
-            existing.trackId === item.track_id;
+          const key = `${item.participant_id}:${item.track_id}`;
+          const existing = previousByKey.get(key);
 
           return [
             item.mid,
@@ -291,11 +343,12 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
               participantId: item.participant_id,
               trackId: item.track_id,
               kind: item.kind,
-              track: sameSubscription ? existing.track : null,
+              track: existing?.track ?? null,
             },
           ];
         }),
       );
+
         
       await session.applyAnswer(answer.sdp);
     } catch (err) {

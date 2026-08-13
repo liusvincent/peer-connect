@@ -41,15 +41,10 @@ type ClientEventBase = {
   event_id: string;
 };
 
-export type WebRTCRenegotiationAnswer = ClientEventBase & {
-  type: "webrtc-renegotiation-answer";
-  sdp: string;
-};
-
 export type WebRTCReady = ClientEventBase & {
   type: "webrtc-ready";
 };
 
-export type ClientEvent = WebRTCRenegotiationAnswer | WebRTCReady;
+export type ClientEvent = WebRTCReady;
 
 export type ClientMessage = ClientRequest | ClientEvent;

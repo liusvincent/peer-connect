@@ -13,6 +13,8 @@ from messages import (
     JoinRoomRequest, LeaveRoomRequest,
     RequestErrorResponse, WebRTCOfferRequest,
     WebRTCReady, MessageErrorResponse,
+    ClientEvent, ClientEventBase, 
+    EventErrorResponse,
     parse_client_message, serialize_server_message,
 )
 
@@ -94,10 +96,11 @@ class WebTransportSession:
         print(message.type)
 
         match message:
-            case WebRTCReady():
-                print("webrtc ready")
-                await self.meeting.handle_webrtc_ready()
-                print("webrtc ready handled")
+            case ClientEventBase():
+                response = await self.dispatch_event(message)
+
+                if response:
+                    self.send_message(response)
 
             case ClientRequestBase():
                 response = await self.dispatch_request(message)
@@ -107,6 +110,31 @@ class WebTransportSession:
                 self.send_message(MessageErrorResponse(
                     message=f"{message.type}-not-implemented"
                 ))
+
+    async def dispatch_event(self, event: ClientEvent) -> ServerMessage | None:
+        try:
+            match event:
+                case WebRTCReady():
+                    await self.meeting.handle_webrtc_ready()
+                    return None
+                case _:
+                    return EventErrorResponse(
+                        event_id=event.event_id,
+                        message=f"{event.type}-not-implemented",
+                    )
+
+        except (RoomError, MeetingError) as error:
+            return EventErrorResponse(
+                event_id=event.event_id,
+                message=error.code,
+            )
+
+        except Exception:
+            traceback.print_exc()
+            return EventErrorResponse(
+                event_id=event.event_id,
+                message="internal-server-error",
+            )
 
     async def dispatch_request(self, request: ClientRequest) -> ServerResponse:
         """ Dispatches request to its correct request_handler
@@ -127,13 +155,23 @@ class WebTransportSession:
                 case LeaveRoomRequest():
                     return await self.meeting.handle_leave_room(request)
                 case _:
-                    return await self.meeting.handle_not_implemented(request)
+                    return RequestErrorResponse(
+                        request_id=request.request_id,
+                        message=f"{request.type}-not-implemented",
+                    )
                 
         except (RoomError, MeetingError) as error:
             return RequestErrorResponse(
                 request_id=request.request_id,
                 message=error.code,
             )
+
+        except Exception:
+            traceback.print_exc()
+            return RequestErrorResponse(
+            request_id=request.request_id,
+            message="internal-server-error",
+        )
 
     def send_message(self, message: ServerMessage) -> None:
         """ Send a message through the WebTransport stream

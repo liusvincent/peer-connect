@@ -1,10 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useWebTransport } from "../hooks/useWebTransport";
 import { RoomContext } from "../contexts/RoomContext";
 
 import type { Room } from "../types/models";
-import type { ClientRequest } from "../protocols";
+import type { ClientRequest, ServerEvent } from "../protocols";
 
 export function RoomProvider({ children }: { children: ReactNode }) {
   const transport = useWebTransport();
@@ -12,6 +12,17 @@ export function RoomProvider({ children }: { children: ReactNode }) {
   const [room, setRoom] = useState<Room | null>(null);
 
   const activeRoom = transport.status === "disconnected" ? null : room;
+
+  useEffect(() => {
+    return transport.listen(handleRoomUpdated)
+  }, [transport]);
+
+  function handleRoomUpdated(event: ServerEvent): void {
+    if (event.type !== "room-updated")
+      return;
+
+    setRoom(event.room);
+  }
 
   function ensureDisconnected(): void {
     if (transport.status !== "disconnected") {

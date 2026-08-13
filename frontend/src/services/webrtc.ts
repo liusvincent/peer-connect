@@ -13,7 +13,7 @@ type WebRTCSessionOptions = {
 
 export interface WebRTCSession {
   addLocalStream: (localStream: MediaStream) => void;
-  addReceivingTransceivers: (media: MediaHint[]) => void;
+  handleReceivingTransceivers: (media: MediaHint[]) => void;
   createOffer: () => Promise<string>;
   applyAnswer: (sdp: string) => Promise<void>;
   close: () => void;
@@ -54,25 +54,38 @@ export function createWebRTCSession(options: WebRTCSessionOptions): WebRTCSessio
     localStreamAdded = true;
   }
 
-  const preparedSubscriptions = new Set<string>();
+  // const preparedSubscriptions = new Set<string>();
+  const recvTransceivers = new Map<string, RTCRtpTransceiver>();
 
-  function addReceivingTransceivers(media: MediaHint[]): void {
+  function handleReceivingTransceivers(media: MediaHint[]): void {
     if (closed) {
       throw new Error("WebRTC session has already closed");
     }
 
+    const desiredKeys = new Set(
+      media.map((item) => `${item.participant_id}:${item.track_id}`),
+    );
+
+    // Remove subscriptions that the server no longer advertises.
+    for (const [key, transceiver] of recvTransceivers) {
+      if (!desiredKeys.has(key)) {
+        transceiver.receiver.track?.stop();
+        transceiver.stop();
+        recvTransceivers.delete(key);
+      }
+    }
+
+    // Add newly advertised subscriptions.
     for (const item of media) {
       const key = `${item.participant_id}:${item.track_id}`;
 
-      if (preparedSubscriptions.has(key)) {
-        continue;
+      if (!recvTransceivers.has(key)) {
+        const transceiver = pc.addTransceiver(item.kind, {
+          direction: "recvonly",
+        });
+
+        recvTransceivers.set(key, transceiver);
       }
-
-      pc.addTransceiver(item.kind, {
-        direction: "recvonly",
-      });
-
-      preparedSubscriptions.add(key);
     }
   }
 
@@ -122,7 +135,7 @@ export function createWebRTCSession(options: WebRTCSessionOptions): WebRTCSessio
 
   return {
     addLocalStream,
-    addReceivingTransceivers,
+    handleReceivingTransceivers,
     createOffer,
     applyAnswer,
     close,

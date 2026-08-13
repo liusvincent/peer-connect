@@ -137,8 +137,16 @@ class WebRTCOfferNeeded(ServerEventBase):
     type: Literal["webrtc-offer-needed"] = "webrtc-offer-needed"
     media_hint: list[MediaSubscriptionHint]
 
+class RoomUpdated(ServerEventBase):
+    type: Literal["room-updated"] = "room-updated"
+    room: RoomInfo
+
+class EventErrorResponse(ServerEventBase):
+    type: Literal["event-error"] = "event-error"
+    message: str
+
 ServerEvent = Annotated[
-    WebRTCOfferNeeded,
+    WebRTCOfferNeeded | RoomUpdated| EventErrorResponse,
     Field(discriminator="type")
 ]
 

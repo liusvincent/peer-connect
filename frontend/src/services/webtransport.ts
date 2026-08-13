@@ -116,7 +116,10 @@ async function handleMessage(
     return;
   }
 
-  await handleEvent(message);
+  if ("event_id" in message) {
+    await handleEvent(message);
+    return;
+  }
 }
 
 type ServerEventListener = (
@@ -138,6 +141,13 @@ export function listenToServerEvent(
 async function handleEvent(
   event: ServerEvent,
 ): Promise<void> {
+   if (event.type === "event-error") {
+    console.error(
+      `Server failed to process event ${event.event_id}: ${event.message}`,
+    );
+    return;
+  }
+
   for (const listener of serverEventListeners) {
     await listener(event);
   }

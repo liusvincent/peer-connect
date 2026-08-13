@@ -20,19 +20,23 @@ class OutgoingMediaInfo(OutgoingMediaHint):
 class WebRTCSession:
     def __init__(
         self, 
-        track_callback: Callable[[MediaStreamTrack], Awaitable[None]],
-        track_ended_callback: Callable[[str], Awaitable[None]],
+        publish_track: Callable[[MediaStreamTrack], Awaitable[None]],
+        unpublish_track: Callable[[str], Awaitable[None]],
+        on_failed: Callable[[], Awaitable[None]]
     ) -> None:
         self.pc = RTCPeerConnection()
 
-        self.incoming_tracks: dict[str, MediaStreamTrack] = {} # local tracks
-        self.outgoing_senders: dict[tuple[str, str], RTCRtpSender] = {} # remote tracks
+        # handles local tracks
+        self.incoming_tracks: dict[str, MediaStreamTrack] = {} 
+         # handles remote tracks
+        self.outgoing_senders: dict[tuple[str, str], RTCRtpSender] = {}
 
         self.closed = False
         self.negotiation_lock = asyncio.Lock()
 
-        self.track_callback = track_callback
-        self.track_ended_callback = track_ended_callback
+        self.publish_track = publish_track
+        self.unpublish_track = unpublish_track
+        self.on_failed = on_failed
 
         @self.pc.on("track")
         async def on_track(track: MediaStreamTrack):
@@ -44,16 +48,16 @@ class WebRTCSession:
                 removed = self.incoming_tracks.pop(track_id, None)
                 if removed is None:
                     return
-                await self.track_ended_callback(track_id)
+                await self.unpublish_track(track_id)
 
-            await self.track_callback(track)
+            await self.publish_track(track)
 
         @self.pc.on("connectionstatechange")
         async def on_connectionstatechange():
             print("WebRTC state:", self.pc.connectionState)
 
-            if self.pc.connectionState in ("failed", "closed"):
-                await self.close()
+            if self.pc.connectionState in ("failed"):
+                await self.on_failed()
 
     async def handle_offer(self, sdp: str) -> tuple[str, list[OutgoingMediaInfo]]:
         """ Handle the offer created by the browser 
@@ -128,16 +132,10 @@ class WebRTCSession:
                 return
 
             self.closed = True
-            track_ids = list(self.incoming_tracks)
             self.incoming_tracks.clear()
             self.outgoing_senders.clear()
 
             await self.pc.close()
-
-            await asyncio.gather(
-                *(self.track_ended_callback(track_id) for track_id in track_ids),
-                return_exceptions=True,
-            )
 
     def _get_outgoing_media(self) -> list[OutgoingMediaInfo]:
         transceiver_by_sender = {

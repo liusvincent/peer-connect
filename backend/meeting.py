@@ -6,10 +6,10 @@ from messages import (
     LeaveRoomRequest, LeftRoomResponse,
     RequestErrorResponse, WebRTCOfferRequest, 
     WebRTCAnswerResponse, WebRTCOfferNeeded,
-    CreateUserResponse
+    CreateUserResponse, RoomUpdated
 )
 
-from rooms import Participant, RoomManager
+from rooms import Participant, RoomManager, Room
 from aiortc import MediaStreamTrack
 from webrtc import WebRTCSession
 from typing import Callable
@@ -49,12 +49,6 @@ class MeetingHandler:
 
         self.send_message = send_message
 
-    async def handle_not_implemented(self, request: ClientRequest) -> ServerResponse:
-        return RequestErrorResponse(
-            request_id=request.request_id,
-            message=f"{request.type}-not-implemented",
-        )
-
     def _require_participant(self) -> Participant:
         participant = self.participant
 
@@ -84,7 +78,9 @@ class MeetingHandler:
         assert isinstance(request, WebRTCOfferRequest)
 
         if self.webrtc is None or self.webrtc.closed:
-            self.webrtc = WebRTCSession(self._publish_track, self._unpublish_track)
+            self.webrtc = WebRTCSession(
+                self._publish_track, self._unpublish_track, self.close
+            )
 
         try:
             answer_sdp, outgoing_media = await self.webrtc.handle_offer(request.sdp)
@@ -142,7 +138,8 @@ class MeetingHandler:
             name=user_name,
             on_track_published=self._subscribe_to_track,
             on_track_unpublished=self._unsubscribe_from_track,
-            on_negotiation_needed=self._request_negotiation
+            on_negotiation_needed=self._request_negotiation,
+            on_room_updated=self._send_room_update
         )
 
         return CreateUserResponse(
@@ -192,6 +189,14 @@ class MeetingHandler:
             )
         )
 
+    def _send_room_update(self, room: Room) -> None:
+        self.send_message(
+            RoomUpdated(
+                event_id=str(uuid4()),
+                room=room,
+            )
+        )
+
     async def handle_webrtc_ready(self) -> None:
         if self.media_ready:
             return
@@ -199,14 +204,18 @@ class MeetingHandler:
         participant, room_id = self._require_participant_in_room()
         webrtc = self._require_webrtc()
 
-        
-        await self.room_manager.activate_participant_media(
-            participant_id=participant.id,
-            room_id=room_id,
-            incoming_tracks=list(webrtc.incoming_tracks.values())
-        )
-
         self.media_ready = True
+        incoming_tracks = list(webrtc.incoming_tracks.values())
+
+        try:
+            await self.room_manager.activate_participant_media(
+                participant_id=participant.id,
+                room_id=room_id,
+                incoming_tracks=incoming_tracks,
+            )
+        except Exception:
+            self.media_ready = False
+            raise
 
     async def handle_join_lobby(self, request: ClientRequest) -> ServerResponse:
         assert isinstance(request, JoinLobbyRequest)

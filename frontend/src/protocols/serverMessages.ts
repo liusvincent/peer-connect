@@ -52,6 +52,16 @@ export type WebRTCOfferNeeded = ServerEventBase & {
   media_hint: MediaHint[];
 }
 
-export type ServerEvent = WebRTCOfferNeeded;
+export type RoomUpdated = ServerEventBase & {
+  type: "room-updated";
+  room: Room;
+}
+
+export type EventErrorResponse = ServerEventBase & {
+  type: "event-error";
+  message: string;
+}
+
+export type ServerEvent = WebRTCOfferNeeded | RoomUpdated | EventErrorResponse;
 
 export type ServerMessage = ServerResponse | ServerEvent;
