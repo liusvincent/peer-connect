@@ -75,7 +75,7 @@ Then generate the SHA-256 fingerprint:
 openssl x509 -in cert.pem -outform DER | openssl dgst -sha256 | awk '{print toupper($2)}'
 ```
 
-Paste the output into `frontend/src/services/webtransport.ts`
+Paste the output into [frontend/src/services/webtransport.ts](frontend/src/services/webtransport.ts)
 
 > [!NOTE]
 > The certificate's validity period must not exceed 14 days. Otherwise, the browser will reject the WebTransport connection during the handshake.
@@ -111,6 +111,10 @@ Peer-Connect uses an SFU server for multi-user video calls. Clients establish We
 
 For a detailed explanation, see [`docs/architecture.md`](docs/architecture.md).
 
+## Documentation
+
+Additional documentation is available in the [`docs`](docs) directory. It covers the system design, architectural decisions, design patterns, and overall code structure of the project.
+
 ## License
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE) for details.
