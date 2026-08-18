@@ -10,7 +10,7 @@ import VideoPreview from "../components/VideoPreview";
 export default function Lobby() {
   const navigate = useNavigate();
   const transport = useWebTransport();
-  const { room, joinRoom, leaveRoom } = useRoom();
+  const { room, joinRoom } = useRoom();
   const localMedia = useLocalMedia();
 
   const [lobbyError, setLobbyError] = useState<string | null>(null);
@@ -35,19 +35,6 @@ export default function Lobby() {
     }
   }
 
-  async function handleLeaveLobby(): Promise<void> {
-    setLobbyError(null);
-    try {
-      await leaveRoom();
-      localMedia.stop();
-
-      navigate("/", { replace: true });
-    } catch (error) {
-      console.error(error);
-      setLobbyError("Could not leave the lobby.");
-    }
-  }
-
   const displayedError = lobbyError ?? localMedia.error;
 
   function closeErrorDialog(): void {
@@ -56,16 +43,38 @@ export default function Lobby() {
   }
 
   return (
-    <main>
-      <VideoPreview name={transport.user.name} />
-      <button onClick={handleJoinRoom}>Join</button>
-      <button onClick={handleLeaveLobby}>Leave</button>
-      <dialog open={displayedError !== null}>
-        <p>{displayedError}</p>
-        {lobbyError && (
-          <button onClick={closeErrorDialog}>Close</button>
-        )}
-      </dialog>
+    <main className="flex min-h-screen items-center justify-center px-6 gap-20">
+      <div className="w-[800px]">
+        <VideoPreview />
+      </div>
+
+      <div className="flex flex-col items-center justify-center gap-3">
+        <h2 className="text-2xl">
+          Ready to Join?
+        </h2>
+        <button
+          className="bg-blue-600 w-25 text-white rounded-full px-6 py-3 outline-none"
+          onClick={handleJoinRoom}
+        >
+          Join
+        </button>
+      </div>
+
+      {displayedError && (
+        <div className="fixed bottom-12 left-4 max-w-sm bg-gray-900 px-4 py-3 text-sm text-white shadow-lg">
+          <div className="flex items-center gap-4">
+            <p>{lobbyError}</p>
+
+            <button
+              onClick={() => closeErrorDialog()}
+              className="ml-auto font-medium text-blue-300 hover:text-blue-200"
+            >
+              Dismiss
+            </button>
+            
+          </div>
+        </div>
+      )}
     </main>
   );
 }

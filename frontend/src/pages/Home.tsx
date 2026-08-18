@@ -34,12 +34,23 @@ export default function Home() {
   };
 
   return (
-    <main>
+    <main className="flex min-h-screen justify-center p-6">
       <JoinRoomForm onJoin={handleJoin} onCreate={handleCreate} />
-      <dialog open={!!error}>
-        <p>{error}</p>
-        <button onClick={() => setError(null)}>Close</button>
-      </dialog>
+      
+      {error && (
+        <div className="fixed bottom-12 left-4 max-w-sm bg-gray-900 px-4 py-3 text-sm text-white shadow-lg">
+          <div className="flex items-center gap-4">
+            <p>{error}</p>
+
+            <button
+              onClick={() => setError(null)}
+              className="ml-auto font-medium text-blue-300 hover:text-blue-200"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

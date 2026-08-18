@@ -3,7 +3,7 @@ import { useLocalMedia } from "../hooks/useLocalMedia"
 import { useWebTransport } from "../hooks/useWebTransport"
 import { useRoom } from "../hooks/useRoom"
 
-import VideoDisplay from "../components/VideoDisplay";
+import VideoTile from "./VideoTile";
 
 export default function VideoGrid() {
   const callMedia = useCallMedia();
@@ -12,13 +12,12 @@ export default function VideoGrid() {
   const transport = useWebTransport();
 
   return (
-    <section className="video-grid">
-      <VideoDisplay
+    <section className="grid w-full grid-cols-1 gap-3 p-3 sm:grid-cols-[repeat(auto-fit,minmax(280px,1fr))]">
+      <VideoTile
         stream={localMedia.stream}
         name={transport.user?.name ?? "You"}
-        muted
-        mirrored
         cameraEnabled={localMedia.cameraEnabled}
+        muted
       />
 
       {callMedia.remoteMedia.map(({ participantId, stream }) => {
@@ -29,7 +28,7 @@ export default function VideoGrid() {
           .some((track) => track.readyState === "live");
 
         return (
-          <VideoDisplay
+          <VideoTile
             key={participantId}
             stream={stream}
             name={participant?.name ?? participantId}

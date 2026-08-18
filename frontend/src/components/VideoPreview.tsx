@@ -1,42 +1,66 @@
 import { useLocalMedia } from "../hooks/useLocalMedia";
-import VideoDisplay from "../components/VideoDisplay";
+import VideoPlayer from "./VideoPlayer";
 
-type VideoPreviewProps = {
-  name: string;
-};
+import {
+  Mic,
+  MicOff,
+  Video,
+  VideoOff,
+} from "lucide-react";
 
-export default function VideoPreview({ name }: VideoPreviewProps) {
-  const {
-    stream,
-    cameraEnabled,
-    micEnabled,
-    setCameraEnabled,
-    setMicEnabled,
-  } = useLocalMedia();
+export default function VideoPreview() {
+  const { stream, cameraEnabled, micEnabled, setCameraEnabled, setMicEnabled } =
+    useLocalMedia();
 
   return (
-    <div className="video-preview">
-      <VideoDisplay
-        stream={stream}
-        name={name}
-        cameraEnabled={cameraEnabled}
-        muted
-        mirrored
-      />
+    <div className="relative w-full aspect-video overflow-hidden rounded-xl bg-gray-900">
+      {stream && (
+        <VideoPlayer
+          stream={stream}
+          muted={micEnabled}
+          className={cameraEnabled ? "" : "invisible"}
+        />
+      )}
 
-      <div className="video-preview__controls">
+      {!stream && (
+        <div className="absolute inset-0 grid place-content-center text-white">
+          <p className="text-md text-zinc-300">
+            Camera access is required
+          </p>
+        </div>
+      )}
+
+      {stream && !cameraEnabled && (
+       <div className="absolute inset-0 grid place-content-center text-white">
+          <p className="mt-3 text-md text-zinc-300">
+            Camera is off
+          </p>
+        </div>
+      )}
+
+      <div className="absolute bottom-1 left-1/2 flex -translate-x-1/2 items-center gap-3 p-2">
         <button
-          className="media-control"
+          type="button"
           onClick={() => setMicEnabled(!micEnabled)}
+          className={`grid h-11 w-11 place-content-center rounded-full transition ${
+            micEnabled
+              ? "bg-zinc-300 text-gray"
+              : "bg-red-300 text-gray"
+          }`}
         >
-          {micEnabled ? "Mic on" : "Mic off"}
+          {micEnabled ? <Mic size={20} /> : <MicOff size={20} />}
         </button>
 
         <button
-          className="media-control"
+          type="button"
           onClick={() => setCameraEnabled(!cameraEnabled)}
+          className={`grid h-11 w-11 place-content-center rounded-full transition ${
+            cameraEnabled
+              ? "bg-zinc-300 text-gray"
+              : "bg-red-300 text-gray"
+          }`}
         >
-          {cameraEnabled ? "Camera on" : "Camera off"}
+          {cameraEnabled ? <Video size={20} /> : <VideoOff size={20} />}
         </button>
       </div>
     </div>

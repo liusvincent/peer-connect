@@ -1,5 +1,3 @@
-import "./App.css";
-
 import { BrowserRouter, Outlet, Routes, Route } from "react-router-dom";
 
 import Home from "./pages/Home";
@@ -29,11 +27,13 @@ export default function App() {
         <RoomProvider>
           <Routes>
             <Route path="/" element={<Home />} />
+
             <Route element={<MeetingLayout />}>
               <Route path="/lobby/:roomId" element={<Lobby />} />
               <Route path="/room/:roomId" element={<Room />} />
             </Route>
           </Routes>
+          
           <Footer />
         </RoomProvider>
       </WebTransportProvider>

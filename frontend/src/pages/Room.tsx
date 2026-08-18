@@ -48,13 +48,34 @@ export default function Room() {
   }
 
   return (
-    <main>
-      <VideoGrid />
-      <CallControl 
-        onCamera={handleCamera}
-        onMic={handleMic}
-        onEnd={handleLeaveRoom}
-      />
+    <main className="flex min-h-screen flex-col overflow-hidden bg-[#202124] pb-8 text-white">
+      <header className="flex items-center justify-between px-5 py-3">
+        <div>
+          <p className="text-sm text-gray-400">
+            Room: {room.id}
+          </p>
+        </div>
+
+        <div className="rounded-full bg-[#303134] px-4 py-2 text-sm text-gray-300">
+          {callMedia.status}
+        </div>
+      </header>
+
+      <section className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-4 py-2">
+        <div className="w-full max-w-7xl">
+          <VideoGrid />
+        </div>
+      </section>
+
+      <div className="p-3">
+        <CallControl
+          cameraEnabled={localMedia.cameraEnabled}
+          micEnabled={localMedia.micEnabled}
+          onCamera={handleCamera}
+          onMic={handleMic}
+          onEnd={handleLeaveRoom}
+        />
+      </div>
     </main>
   );
 }
