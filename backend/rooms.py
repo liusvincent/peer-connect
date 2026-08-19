@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiortc.contrib.media import MediaRelay
+from aiortc.contrib.media import MediaRelay, MediaBlackhole
 from aiortc import MediaStreamTrack
 
 from typing import Callable, Awaitable
@@ -55,6 +55,10 @@ class Room:
         self.published_tracks: dict[tuple[str, str], MediaStreamTrack] = {}
         self.media_participants: set[str] = set()
         self.relay = MediaRelay()
+        self.track_sinks: dict[
+            tuple[str, str],
+            tuple[MediaBlackhole, MediaStreamTrack],
+        ] = {}
 
     def _ensure_can_join(self, participant: Participant) -> None:
         if participant.room_id is not None:
@@ -126,6 +130,9 @@ class Room:
             participant.room_id = None
             participant.role = Role.MEMBER
 
+        self.track_sinks.clear()
+        self.published_tracks.clear()
+
         self.media_participants.clear()
         self.participants.clear()
         self.lobby.clear()
@@ -148,6 +155,14 @@ class Room:
 
         self.published_tracks[key] = track
 
+        sink_track = self.relay.subscribe(track, buffered=False)
+
+        sink = MediaBlackhole()
+        sink.addTrack(sink_track)
+        await sink.start()
+
+        self.track_sinks[key] = (sink, sink_track)
+
         callbacks = []
 
         subscribers = list(self.participants.items())
@@ -158,7 +173,7 @@ class Room:
             if subscriber_id not in self.media_participants:
                 continue
 
-            relayed_track = self.relay.subscribe(track)
+            relayed_track = self.relay.subscribe(track, buffered=False)
 
             callbacks.append(
                 subscriber.on_track_published(
@@ -183,6 +198,13 @@ class Room:
 
         if track is None:
             return affected
+
+        sink_entry = self.track_sinks.pop(key, None)
+
+        if sink_entry is not None:
+            sink, sink_track = sink_entry
+            await sink.stop()
+            sink_track.stop()
 
         callbacks = []
 
@@ -244,7 +266,7 @@ class Room:
             if publisher_id == subscriber.id:
                 continue
 
-            relayed_track = self.relay.subscribe(track)
+            relayed_track = self.relay.subscribe(track, buffered=False)
 
             await subscriber.on_track_published(
                 publisher_id,

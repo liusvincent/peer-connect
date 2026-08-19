@@ -21,6 +21,8 @@ const convertHexToBytes = (hex: string): Uint8Array =>
 const hash: Uint8Array = convertHexToBytes(HEXFINGERPRINT);
 //////////////////////////////////////////////////////////////////////////
 
+const WEBTRANSPORT_URL = import.meta.env.VITE_WEBTRANSPORT_URL || 'https://localhost:4433/wt';
+
 let transport: WebTransport | null = null;
 let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -41,7 +43,7 @@ export async function connectWebTransport(onClose: CloseProviderHandler): Promis
 
     console.log("Creating WebTransport");
 
-    transport = new WebTransport("https://localhost:4433/wt", {
+    transport = new WebTransport(WEBTRANSPORT_URL, {
       serverCertificateHashes: [
         { algorithm: "sha-256", value: hash.buffer as ArrayBuffer },
       ],

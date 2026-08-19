@@ -1,0 +1,14 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "4433:4433/udp"
+    volumes:
+      - ./backend/cert.pem:/certs/cert.pem:ro
+      - ./backend/key.pem:/certs/key.pem:ro
+    environment:
+      PEER_CONNECT_HOST: "0.0.0.0"
+      PEER_CONNECT_PORT: "4433"
+      PEER_CONNECT_CERT_PATH: "/certs/cert.pem"
+      PEER_CONNECT_KEY_PATH: "/certs/key.pem"
