@@ -1,9 +1,9 @@
 services:
   backend:
+    restart: unless-stopped
     build:
       context: ./backend
-    ports:
-      - "4433:4433/udp"
+    network_mode: host
     volumes:
       - ./backend/cert.pem:/certs/cert.pem:ro
       - ./backend/key.pem:/certs/key.pem:ro

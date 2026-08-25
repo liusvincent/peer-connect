@@ -9,9 +9,10 @@ import type {
   ResponseFor,
 } from "../protocols";
 
-// For certs purposes (local development) /////////////////////////////////
+// For certs purposes /////////////////////////////////////////////////////
 const HEXFINGERPRINT =
-  "66C837247124F865B355E9D37FB0E18CDA291C9C311721AD5FEAFE501788501D";
+  "046D80AB15021666C11D634F2C8DE82E2BCF6D774D99F95EBBCA96841F9DF621";
+  // "EE74209213E6B24FD64F0F6A04EAC3DAE5A1D4FD36413696EC4AA213D2847C10";
 
 const convertHexToBytes = (hex: string): Uint8Array =>
   Uint8Array.from({ length: hex.length / 2 }, (_, i) =>
@@ -21,11 +22,22 @@ const convertHexToBytes = (hex: string): Uint8Array =>
 const hash: Uint8Array = convertHexToBytes(HEXFINGERPRINT);
 //////////////////////////////////////////////////////////////////////////
 
-const WEBTRANSPORT_URL = import.meta.env.VITE_WEBTRANSPORT_URL || 'https://localhost:4433/wt';
+const WEBTRANSPORT_URL = import.meta.env.VITE_WEBTRANSPORT_URL;
+
+if (!WEBTRANSPORT_URL) {
+  throw new Error("VITE_WEBTRANSPORT_URL is not configured");
+}
 
 let transport: WebTransport | null = null;
 let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
 let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+window.addEventListener("pagehide", () => {
+  transport?.close({
+    closeCode: 0,
+    reason: "page closed",
+  });
+});
 
 type CloseProviderHandler = (error?: unknown) => void;
 
@@ -41,6 +53,7 @@ export async function connectWebTransport(onClose: CloseProviderHandler): Promis
     await disconnectWebTransport();
     closeHandler = onClose;
 
+    console.log(WEBTRANSPORT_URL)
     console.log("Creating WebTransport");
 
     transport = new WebTransport(WEBTRANSPORT_URL, {

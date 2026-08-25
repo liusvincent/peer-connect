@@ -27,7 +27,7 @@ export default function CallControl({
         type="button" 
         onClick={onCamera}
         className={`grid h-11 w-11 place-content-center rounded-full transition ${
-            micEnabled
+            cameraEnabled
               ? "bg-zinc-700 text-gray-200"
               : "bg-red-300 text-gray"
           }`}
@@ -39,7 +39,7 @@ export default function CallControl({
         type="button" 
         onClick={onMic}
         className={`grid h-11 w-11 place-content-center rounded-full transition ${
-          cameraEnabled
+          micEnabled
             ? "bg-zinc-700 text-gray-200"
             : "bg-red-300 text-gray"
         }`}

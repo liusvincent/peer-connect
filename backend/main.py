@@ -12,7 +12,7 @@ import os
 
 
 async def main():
-    host = os.getenv("PEER_CONNECT_HOST", "0.0.0.0")
+    host = os.getenv("PEER_CONNECT_HOST", "127.0.0.1")
     port = int(os.getenv("PEER_CONNECT_PORT", "4433"))
     cert_path = os.getenv("PEER_CONNECT_CERT_PATH", "cert.pem")
     key_path = os.getenv("PEER_CONNECT_KEY_PATH", "key.pem")
@@ -26,18 +26,19 @@ async def main():
         host=host,
         port=port,
         configuration=configuration,
-        create_protocol=partial(
-            WebTransportProtocol,
-            room_manager=room_manager,
-        ),
+        create_protocol=partial(WebTransportProtocol, room_manager=room_manager),
     )
-    print(f"WebTransport Server running on https://{host}:{port}/wt")
+    print(f"WebTransport Server Running on https://{host}:{port}/wt")
 
     try:
         await asyncio.Event().wait()
     finally:
-        print("Shutting down WebTransport Server...")
+        print("Shutting Down WebTransport Server...")
+
         server.close()
+        await room_manager.close()
+
+        print("WebTransport Server Ended")
 
 
 if __name__ == "__main__":

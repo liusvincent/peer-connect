@@ -1,5 +1,11 @@
-from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCRtpSender
-from aiortc.contrib.media import MediaRelay
+from aiortc import (
+    RTCPeerConnection, 
+    RTCSessionDescription, 
+    MediaStreamTrack, 
+    RTCRtpSender, 
+    RTCConfiguration,
+    RTCIceServer
+)
 
 from typing import Callable, Awaitable
 from dataclasses import dataclass
@@ -17,14 +23,23 @@ class OutgoingMediaHint:
 class OutgoingMediaInfo(OutgoingMediaHint):
     mid: str 
 
+
 class WebRTCSession:
     def __init__(
         self, 
         publish_track: Callable[[MediaStreamTrack], Awaitable[None]],
         unpublish_track: Callable[[str], Awaitable[None]],
-        on_failed: Callable[[], Awaitable[None]]
+        on_terminated: Callable[[], Awaitable[None]]
     ) -> None:
-        self.pc = RTCPeerConnection()
+        configuration = RTCConfiguration(
+            iceServers=[
+                RTCIceServer(
+                    urls=["stun:stun.l.google.com:19302"],
+                ),
+            ],
+        )
+        
+        self.pc = RTCPeerConnection(configuration=configuration)
 
         # handles local tracks
         self.incoming_tracks: dict[str, MediaStreamTrack] = {} 
@@ -36,10 +51,14 @@ class WebRTCSession:
 
         self.publish_track = publish_track
         self.unpublish_track = unpublish_track
-        self.on_failed = on_failed
+        self.on_terminated = on_terminated
 
         @self.pc.on("track")
         async def on_track(track: MediaStreamTrack):
+            if self.closed:
+                track.stop()
+                return
+
             track_id = track.id
             self.incoming_tracks[track_id] = track
 
@@ -56,8 +75,11 @@ class WebRTCSession:
         async def on_connectionstatechange():
             print("WebRTC state:", self.pc.connectionState)
 
-            if self.pc.connectionState in ("failed"):
-                await self.on_failed()
+            if self.closed:
+                return
+
+            if self.pc.connectionState in ("failed", "closed"):
+                await self.on_terminated()
 
     async def handle_offer(self, sdp: str) -> tuple[str, list[OutgoingMediaInfo]]:
         """ Handle the offer created by the browser 
@@ -113,7 +135,7 @@ class WebRTCSession:
             if sender is None:
                 return False
 
-            old_track = sender.track
+            old_relayed_track = sender.track
             sender.replaceTrack(None)
 
             for transceiver in self.pc.getTransceivers():
@@ -121,8 +143,8 @@ class WebRTCSession:
                     await transceiver.stop()
                     break
 
-            if old_track is not None:
-                old_track.stop()
+            if old_relayed_track is not None:
+                old_relayed_track.stop()
 
             return True
 
@@ -132,6 +154,7 @@ class WebRTCSession:
                 return
 
             self.closed = True
+
             self.incoming_tracks.clear()
             self.outgoing_senders.clear()
 

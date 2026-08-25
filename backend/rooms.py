@@ -121,18 +121,23 @@ class Room:
     def has_no_participants(self) -> bool:
         return not self.participants
 
-    def close(self) -> None:
-        for participant in self.participants.values():
-            participant.room_id = None
-            participant.role = Role.MEMBER
-
-        for participant in self.lobby.values():
-            participant.room_id = None
-            participant.role = Role.MEMBER
-
+    async def close(self) -> None:
+        sinks = list(self.track_sinks.values())
         self.track_sinks.clear()
-        self.published_tracks.clear()
 
+        await asyncio.gather(
+            *(sink.stop() for sink, _ in sinks),
+            return_exceptions=True,
+        )
+
+        for _, sink_track in sinks:
+            sink_track.stop()
+
+        for participant in (*self.participants.values(), *self.lobby.values()):
+            participant.room_id = None
+            participant.role = Role.MEMBER
+
+        self.published_tracks.clear()
         self.media_participants.clear()
         self.participants.clear()
         self.lobby.clear()
@@ -307,16 +312,18 @@ class RoomManager:
     """
     def __init__(self) -> None:
         self.rooms: dict[str, Room] = {}
+        self.lock = asyncio.Lock()
 
-    def create_room(self, participant: Participant) -> Room:
-        room_id = str(uuid4())
-        room = Room(room_id)
+    async def create_room(self, participant: Participant) -> Room:
+        async with self.lock:
+            room_id = str(uuid4())
+            room = Room(room_id)
 
-        room.add_participant(participant)
-        self.rooms[room_id] = room       
-        participant.role = Role.HOST 
+            room.add_participant(participant)
+            self.rooms[room_id] = room       
+            participant.role = Role.HOST 
 
-        return room
+            return room
 
     def _get_room(self, room_id: str) -> Room:
         room = self.rooms.get(room_id)
@@ -326,49 +333,53 @@ class RoomManager:
         
         return room
     
-    def join_room(self, participant: Participant, room_id: str) -> Room:
-        room = self._get_room(room_id)
+    async def join_room(self, participant: Participant, room_id: str) -> Room:
+        async with self.lock:
+            room = self._get_room(room_id)
 
-        if participant.room_id == room_id:
-            return room # repeated join
-            
-        room.add_to_lobby(participant)
-        room.notify_room_updated(exclude_id=participant.id)
+            if participant.room_id == room_id:
+                return room # repeated join
+                
+            room.add_to_lobby(participant)
+            room.notify_room_updated(exclude_id=participant.id)
 
-        return room
+            return room
 
     async def admit_participant(self, participant_id: str, room_id: str) -> Room:
-        room = self._get_room(room_id)
+        async with self.lock:
+            room = self._get_room(room_id)
 
-        await room.admit_participant(participant_id)
-        room.notify_room_updated(exclude_id=participant_id)
-        
-        return room
+            await room.admit_participant(participant_id)
+            room.notify_room_updated(exclude_id=participant_id)
+            
+            return room
 
     async def leave_room(self, participant_id: str, room_id: str) -> None:
-        room = self._get_room(room_id)
-        await room.remove_participant(participant_id)
+        async with self.lock:
+            room = self._get_room(room_id)
+            await room.remove_participant(participant_id)
 
-        if room.has_no_participants(): 
-            self.close_room(room_id)
-        else:
-            room.notify_room_updated()
+            if room.has_no_participants(): 
+                await self._close_room(room_id)
+            else:
+                room.notify_room_updated()
 
-    def close_room(self, room_id: str) -> None:
+    async def _close_room(self, room_id: str) -> None:
         room = self._get_room(room_id)
         del self.rooms[room_id]
-        room.close()    
+        await room.close()    
 
     async def publish_track(self, 
         participant_id: str, 
         room_id: str,
         track: MediaStreamTrack,
-    ) -> None:        
-        room = self._get_room(room_id)
+    ) -> None: 
+        async with self.lock:
+            room = self._get_room(room_id)
 
-        affected = await room.publish_track(participant_id, track)
+            affected = await room.publish_track(participant_id, track)
 
-        room.request_negotiation(affected)
+            room.request_negotiation(affected)
 
 
     async def unpublish_track(
@@ -377,14 +388,15 @@ class RoomManager:
         room_id: str,
         track_id: str,
     ) -> None:
-        room = self._get_room(room_id)
+        async with self.lock:
+            room = self._get_room(room_id)
 
-        affected = await room.unpublish_track(
-            participant_id,
-            track_id,
-        )
+            affected = await room.unpublish_track(
+                participant_id,
+                track_id,
+            )
 
-        room.request_negotiation(affected)
+            room.request_negotiation(affected)
 
     async def activate_participant_media(
         self,
@@ -392,9 +404,20 @@ class RoomManager:
         room_id: str,
         incoming_tracks: list[MediaStreamTrack],
     ) -> None:
-        room = self._get_room(room_id)
+        async with self.lock:
+            room = self._get_room(room_id)
 
-        await room.activate_participant_media(
-            participant_id,
-            incoming_tracks,
-        )
+            await room.activate_participant_media(
+                participant_id,
+                incoming_tracks,
+            )
+
+    async def close(self) -> None:
+        async with self.lock:
+            rooms = list(self.rooms.values())
+            self.rooms.clear()
+
+            await asyncio.gather(
+                *(room.close() for room in rooms),
+                return_exceptions=True,
+            )

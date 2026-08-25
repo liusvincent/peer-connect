@@ -1,10 +1,14 @@
 # Peer-Connect 
+
+### Try out the app -> https://peer-connect-weld.vercel.app/
+
 A pet project to learn about servers. Peer-Connect is a full-stack video calling web application inspired by Google Meet. This project was built to explore how real-time communication servers work and to practice system design through the implementation of an SFU (Selective Forwarding Unit) server.
 
 ### Built With
 **Frontend**
 - React
 - Vite
+- Tailwind CSS
 
 **Backend**
 - Python
@@ -27,7 +31,7 @@ What you need to run this project:
 
 1. Clone or fork the repository
 ```bash
-git clone https://github.com/liusvincent/peer-connect
+git clone https://github.com/liusvincent/peer-connect.git
 ```
 
 2. Go to the project directory
@@ -103,7 +107,7 @@ npm run dev
 
 ## Deployment
 
-To be done... Coming soon
+Peer-connect frontend is deployed on Vercel, and the backend is deployed on a Linux VM.
 
 ## Architecture
 

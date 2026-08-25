@@ -20,7 +20,11 @@ export interface WebRTCSession {
 };
 
 export function createWebRTCSession(options: WebRTCSessionOptions): WebRTCSession {
-  const pc = new RTCPeerConnection();
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }
+    ]
+  });
 
   let closed = false;
 
@@ -34,6 +38,22 @@ export function createWebRTCSession(options: WebRTCSessionOptions): WebRTCSessio
 
   pc.addEventListener("connectionstatechange", () => {
     options.onConnectionStateChange?.(pc.connectionState);
+  });
+
+  pc.addEventListener("icegatheringstatechange", () => {
+    console.log("ICE gathering state:", pc.iceGatheringState);
+  });
+
+  pc.addEventListener("iceconnectionstatechange", () => {
+    console.log("ICE connection state:", pc.iceConnectionState);
+  });
+
+  pc.addEventListener("icecandidate", (event) => {
+    console.log("ICE candidate:", event.candidate?.candidate ?? "complete");
+  });
+
+  pc.addEventListener("icecandidateerror", (event) => {
+    console.error("ICE candidate error:", event);
   });
 
   let localStreamAdded = false;
@@ -89,10 +109,41 @@ export function createWebRTCSession(options: WebRTCSessionOptions): WebRTCSessio
     }
   }
 
+  function waitForIceGathering(pc: RTCPeerConnection): Promise<void> {
+    if (pc.iceGatheringState === "complete") {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        pc.removeEventListener("icegatheringstatechange", handleGathering);
+        pc.removeEventListener("connectionstatechange", handleConnection);
+      };
+
+      const handleGathering = () => {
+        if (pc.iceGatheringState === "complete") {
+          cleanup();
+          resolve();
+        }
+      };
+
+      const handleConnection = () => {
+        if (pc.connectionState === "closed") {
+          cleanup();
+          reject(new Error("Peer connection closed during ICE gathering"));
+        }
+      };
+
+      pc.addEventListener("icegatheringstatechange", handleGathering);
+      pc.addEventListener("connectionstatechange", handleConnection);
+    });
+  }
+  
   async function createOffer(): Promise<string> {
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      await waitForIceGathering(pc);
 
       if (!pc.localDescription) {
         throw new Error("WebRTC local description was not created");
