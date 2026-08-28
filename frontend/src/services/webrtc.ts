@@ -90,7 +90,7 @@ export function createWebRTCSession(options: WebRTCSessionOptions): WebRTCSessio
     for (const [key, transceiver] of recvTransceivers) {
       if (!desiredKeys.has(key)) {
         transceiver.receiver.track?.stop();
-        transceiver.stop();
+        transceiver.direction = "inactive";
         recvTransceivers.delete(key);
       }
     }

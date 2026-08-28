@@ -144,7 +144,7 @@ class WebRTCSession:
 
             for transceiver in self.pc.getTransceivers():
                 if transceiver.sender is sender:
-                    await transceiver.stop()
+                    transceiver.direction = "inactive"
                     break
 
             if old_relayed_track is not None:
