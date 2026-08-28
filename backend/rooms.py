@@ -13,23 +13,28 @@ import asyncio
 class RoomError(Exception):
     code = "room-error"
 
+
 class RoomNotFound(RoomError):
     code = "room-not-found"
 
+
 class ParticipantAlreadyInRoom(RoomError):
-    code = "participant-already-in-room"  
+    code = "participant-already-in-room"
+
 
 class ParticipantAlreadyJoined(RoomError):
     code = "participant-already-joined"
 
+
 class ParticipantNotFound(RoomError):
-    code = "participant-not-found" 
+    code = "participant-not-found"
 
 
 class Role(StrEnum):
     HOST = "host"
     CO = "co"
     MEMBER = "member"
+
 
 @dataclass
 class Participant:
@@ -38,15 +43,17 @@ class Participant:
     room_id: str | None = None
     role: Role = Role.MEMBER
 
-    on_track_published: Callable[[str, str, MediaStreamTrack], Awaitable[None]] | None = None
+    on_track_published: (
+        Callable[[str, str, MediaStreamTrack], Awaitable[None]] | None
+    ) = None
     on_track_unpublished: Callable[[str, str], Awaitable[None]] | None = None
     on_negotiation_needed: Callable[[], None] | None = None
     on_room_updated: Callable[[Room], None] | None = None
 
 
 class Room:
-    """ Room Logic Handler
-    """
+    """Room Logic Handler"""
+
     def __init__(self, room_id: str) -> None:
         self.id = room_id
         self.participants: dict[str, Participant] = {}
@@ -99,14 +106,13 @@ class Room:
         self.media_participants.discard(participant_id)
 
         published_keys = [
-            key for key in self.published_tracks
-            if key[0] == participant_id
+            key for key in self.published_tracks if key[0] == participant_id
         ]
 
         affected = set()
 
         for publisher_id, track_id in published_keys:
-            affected.update( 
+            affected.update(
                 await self.unpublish_track(
                     publisher_id,
                     track_id,
@@ -145,7 +151,7 @@ class Room:
     async def publish_track(
         self, publisher_id: str, track: MediaStreamTrack
     ) -> set[str]:
-        """ For all participants (subscribers) create a proxy track
+        """For all participants (subscribers) create a proxy track
         then add the proxy track to their webrtc
         """
         affected = set()
@@ -173,7 +179,7 @@ class Room:
         subscribers = list(self.participants.items())
         for subscriber_id, subscriber in subscribers:
             if subscriber_id == publisher_id:
-                continue   
+                continue
 
             if subscriber_id not in self.media_participants:
                 continue
@@ -194,8 +200,7 @@ class Room:
         return affected
 
     async def unpublish_track(self, publisher_id: str, track_id: str) -> set[str]:
-        """ For all participants remove the publisher's relayed track
-        """
+        """For all participants remove the publisher's relayed track"""
         affected = set()
 
         key = (publisher_id, track_id)
@@ -221,11 +226,7 @@ class Room:
             if subscriber_id not in self.media_participants:
                 continue
 
-            callbacks.append( 
-                subscriber.on_track_unpublished(
-                    publisher_id, track_id
-                )
-            )
+            callbacks.append(subscriber.on_track_unpublished(publisher_id, track_id))
 
             affected.add(subscriber_id)
 
@@ -237,7 +238,7 @@ class Room:
         participant_id: str,
         incoming_tracks: list[MediaStreamTrack],
     ) -> None:
-        """ Catch up: Initialization
+        """Catch up: Initialization
         Publish your tracks
         and suscribe to your remote peer tracks
         """
@@ -261,7 +262,7 @@ class Room:
         self.request_negotiation(affected)
 
     async def _subscribe_to_existing_tracks(self, subscriber: Participant) -> bool:
-        """ For all published track,
+        """For all published track,
         subscribe to each one of them unless it's yours
         """
         subscribed = False
@@ -308,8 +309,8 @@ class Room:
 
 
 class RoomManager:
-    """ Handles all room on the server
-    """
+    """Handles all room on the server"""
+
     def __init__(self) -> None:
         self.rooms: dict[str, Room] = {}
         self.lock = asyncio.Lock()
@@ -320,8 +321,8 @@ class RoomManager:
             room = Room(room_id)
 
             room.add_participant(participant)
-            self.rooms[room_id] = room       
-            participant.role = Role.HOST 
+            self.rooms[room_id] = room
+            participant.role = Role.HOST
 
             return room
 
@@ -330,16 +331,16 @@ class RoomManager:
 
         if room is None:
             raise RoomNotFound()
-        
+
         return room
-    
+
     async def join_room(self, participant: Participant, room_id: str) -> Room:
         async with self.lock:
             room = self._get_room(room_id)
 
             if participant.room_id == room_id:
-                return room # repeated join
-                
+                return room  # repeated join
+
             room.add_to_lobby(participant)
             room.notify_room_updated(exclude_id=participant.id)
 
@@ -351,7 +352,7 @@ class RoomManager:
 
             await room.admit_participant(participant_id)
             room.notify_room_updated(exclude_id=participant_id)
-            
+
             return room
 
     async def leave_room(self, participant_id: str, room_id: str) -> None:
@@ -359,7 +360,7 @@ class RoomManager:
             room = self._get_room(room_id)
             await room.remove_participant(participant_id)
 
-            if room.has_no_participants(): 
+            if room.has_no_participants():
                 await self._close_room(room_id)
             else:
                 room.notify_room_updated()
@@ -367,20 +368,20 @@ class RoomManager:
     async def _close_room(self, room_id: str) -> None:
         room = self._get_room(room_id)
         del self.rooms[room_id]
-        await room.close()    
+        await room.close()
 
-    async def publish_track(self, 
-        participant_id: str, 
+    async def publish_track(
+        self,
+        participant_id: str,
         room_id: str,
         track: MediaStreamTrack,
-    ) -> None: 
+    ) -> None:
         async with self.lock:
             room = self._get_room(room_id)
 
             affected = await room.publish_track(participant_id, track)
 
             room.request_negotiation(affected)
-
 
     async def unpublish_track(
         self,

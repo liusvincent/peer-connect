@@ -1,54 +1,68 @@
 from messages import (
-    ClientRequest, ServerResponse, ServerMessage,
-    CreateRoomRequest, CreateUserRequest,
-    JoinLobbyRequest, JoinedLobbyResponse,
-    JoinRoomRequest, JoinedRoomResponse,
-    LeaveRoomRequest, LeftRoomResponse,
-    WebRTCOfferRequest, WebRTCAnswerResponse, 
-    WebRTCOfferNeeded, CreateUserResponse, 
-    RoomUpdated
+    ClientRequest,
+    ServerResponse,
+    ServerMessage,
+    CreateRoomRequest,
+    CreateUserRequest,
+    JoinLobbyRequest,
+    JoinedLobbyResponse,
+    JoinRoomRequest,
+    JoinedRoomResponse,
+    LeaveRoomRequest,
+    LeftRoomResponse,
+    WebRTCOfferRequest,
+    WebRTCAnswerResponse,
+    WebRTCOfferNeeded,
+    CreateUserResponse,
+    RoomUpdated,
 )
 
 from rooms import Participant, RoomManager, Room
 from aiortc import MediaStreamTrack
 from webrtc import WebRTCSession
-from typing import Callable
+from typing import Callable, Awaitable
 from uuid import uuid4
 
 
 class MeetingError(Exception):
     code = "meeting-error"
 
+
 class MeetingEnded(MeetingError):
     code = "meeting-ended"
+
 
 class UserAlreadyCreated(MeetingError):
     code = "user-already-created"
 
+
 class UserNotCreated(MeetingError):
     code = "user-not-created"
 
+
 class UserNotInRoom(MeetingError):
     code = "user-not-in-room"
+
 
 class WebRTCUnavailable(MeetingError):
     code = "webrtc-unavailable"
 
 
 class MeetingHandler:
-    """ Handler for meeting logic
-    """
+    """Handler for meeting logic"""
+
     def __init__(
-        self, 
+        self,
         room_manager: RoomManager,
         send_message: Callable[[ServerMessage], None],
-        participant: Participant | None = None, 
-        webrtc: WebRTCSession | None = None,
+        on_terminated: Callable[[], Awaitable[None]],
     ) -> None:
         self.room_manager = room_manager
         self.send_message = send_message
-        self.participant = participant
-        self.webrtc = webrtc
+        self.on_terminated = on_terminated
+
+        self.participant: Participant | None = None
+        self.webrtc: WebRTCSession | None = None
         self.media_ready = False
         self.closed = False
 
@@ -65,7 +79,6 @@ class MeetingHandler:
             raise UserNotCreated()
 
         return participant
-
 
     def _require_participant_in_room(self) -> tuple[Participant, str]:
         participant = self._require_participant()
@@ -89,14 +102,25 @@ class MeetingHandler:
 
         return webrtc
 
+    async def _handle_webrtc_terminated(self) -> None:
+        if self.closed:
+            return
+
+        try:
+            await self.close()
+        finally:
+            await self.on_terminated()
+
     async def handle_webrtc_offer(self, request: ClientRequest) -> ServerResponse:
         self._is_open()
 
         assert isinstance(request, WebRTCOfferRequest)
 
-        if self.webrtc is None or self.webrtc.closed:
+        if self.webrtc is None:
             self.webrtc = WebRTCSession(
-                self._publish_track, self._unpublish_track, self.close
+                self._publish_track,
+                self._unpublish_track,
+                self._handle_webrtc_terminated,
             )
 
         try:
@@ -106,13 +130,11 @@ class MeetingHandler:
             raise
 
         return WebRTCAnswerResponse(
-            request_id=request.request_id,
-            sdp=answer_sdp,
-            media_info=outgoing_media
+            request_id=request.request_id, sdp=answer_sdp, media_info=outgoing_media
         )
 
     async def _publish_track(self, track: MediaStreamTrack):
-        """ Callback helper function: for WebRTCSession
+        """Callback helper function: for WebRTCSession
         If an incoming track arrives from this participant,
         Publish it to the other participants in room
         """
@@ -128,8 +150,7 @@ class MeetingHandler:
         )
 
     async def _unpublish_track(self, track_id: str) -> None:
-        """ Callback helper function: for WebRTCSession
-        """
+        """Callback helper function: for WebRTCSession"""
         if not self.media_ready:
             return
 
@@ -158,7 +179,7 @@ class MeetingHandler:
             on_track_published=self._subscribe_to_track,
             on_track_unpublished=self._unsubscribe_from_track,
             on_negotiation_needed=self._request_negotiation,
-            on_room_updated=self._send_room_update
+            on_room_updated=self._send_room_update,
         )
 
         return CreateUserResponse(
@@ -172,7 +193,7 @@ class MeetingHandler:
         track_id: str,
         track: MediaStreamTrack,
     ) -> None:
-        """ Callback helper function: for Participant
+        """Callback helper function: for Participant
         if another participant in room has published a track,
         this participant should receive it
         """
@@ -198,8 +219,7 @@ class MeetingHandler:
         publisher_id: str,
         track_id: str,
     ) -> None:
-        """ Callback helper function: for Participant
-        """
+        """Callback helper function: for Participant"""
         webrtc = self.webrtc
 
         if (
@@ -276,7 +296,6 @@ class MeetingHandler:
             room=room,
         )
 
-
     async def handle_join_room(self, request: ClientRequest) -> ServerResponse:
         assert isinstance(request, JoinRoomRequest)
 
@@ -292,7 +311,6 @@ class MeetingHandler:
             room=room,
         )
 
-
     async def handle_create_room(self, request: ClientRequest) -> ServerResponse:
         assert isinstance(request, CreateRoomRequest)
 
@@ -306,7 +324,6 @@ class MeetingHandler:
             request_id=request.request_id,
             room=room,
         )
-
 
     async def handle_leave_room(self, request: ClientRequest) -> ServerResponse:
         assert isinstance(request, LeaveRoomRequest)
@@ -322,11 +339,11 @@ class MeetingHandler:
 
     async def close(self) -> None:
         if self.closed:
-            return 
+            return
 
         self.closed = True
         self.media_ready = False
-        
+
         participant = self.participant
         webrtc = self.webrtc
         room_id = participant.room_id if participant else None
@@ -344,5 +361,3 @@ class MeetingHandler:
             finally:
                 self.webrtc = None
                 self.participant = None
-
-        

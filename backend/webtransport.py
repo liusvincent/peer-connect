@@ -1,5 +1,9 @@
 from aioquic.h3.connection import H3Connection
-from aioquic.h3.events import WebTransportStreamDataReceived, HeadersReceived
+from aioquic.h3.events import (
+    WebTransportStreamDataReceived,
+    HeadersReceived,
+    DataReceived,
+)
 from aioquic.quic.events import ProtocolNegotiated, ConnectionTerminated
 from aioquic.asyncio import QuicConnectionProtocol
 import asyncio
@@ -7,55 +11,68 @@ import asyncio
 from rooms import RoomManager, RoomError
 
 from messages import (
-    ClientRequest, ServerResponse, ServerMessage, 
-    ClientRequestBase, CreateRoomRequest, 
-    CreateUserRequest, JoinLobbyRequest,
-    JoinRoomRequest, LeaveRoomRequest,
-    RequestErrorResponse, WebRTCOfferRequest,
-    WebRTCReady, MessageErrorResponse,
-    ClientEvent, ClientEventBase, 
+    ClientRequest,
+    ServerResponse,
+    ServerMessage,
+    ClientRequestBase,
+    CreateRoomRequest,
+    CreateUserRequest,
+    JoinLobbyRequest,
+    JoinRoomRequest,
+    LeaveRoomRequest,
+    RequestErrorResponse,
+    WebRTCOfferRequest,
+    WebRTCReady,
+    MessageErrorResponse,
+    ClientEvent,
+    ClientEventBase,
     EventErrorResponse,
-    parse_client_message, serialize_server_message,
+    parse_client_message,
+    serialize_server_message,
 )
 
 from meeting import MeetingHandler, MeetingError
 
-from collections.abc import Callable
+from collections.abc import Callable, Awaitable
 import traceback
 import json
 
 
 class WebTransportSession:
-    """ WebTransport Session Handler:
+    """WebTransport Session Handler:
     Handles webtransport events, requests from the client
     """
+
     def __init__(
         self,
         connection: H3Connection,
         session_id: int,
         transmit: Callable[[], None],
-        room_manager: RoomManager
+        room_manager: RoomManager,
+        request_termination: Callable[[int], Awaitable[None]],
     ) -> None:
         # transport dependencies
         self.connection = connection
         self.session_id = session_id
         self.transmit = transmit
+        self.request_termination = request_termination
         self.control_stream_id: int | None = None
-        
+
         # session-owned states
-        self.meeting = MeetingHandler(room_manager, self.send_message)
+        self.meeting = MeetingHandler(room_manager, self.send_message, self.terminate)
         self.closed = False
+        self.terminated = False
 
         # message handling
         self.event_lock = asyncio.Lock()
         self.buffer = b""
         self.message_queue: asyncio.Queue[bytes] = asyncio.Queue()
-        self.message_worker: asyncio.Task[None] | None = (
-            asyncio.create_task(self.process_messages())
+        self.message_worker: asyncio.Task[None] | None = asyncio.create_task(
+            self.process_messages()
         )
 
     async def handle_event(self, event: WebTransportStreamDataReceived) -> None:
-        """ Listens for messages from the WebTransport stream
+        """Listens for messages from the WebTransport stream
         appends messages into a queue to be processed by self.message_worker
         """
         async with self.event_lock:
@@ -81,8 +98,7 @@ class WebTransportSession:
                     self.message_queue.put_nowait(message)
 
     async def process_messages(self) -> None:
-        """ Function for worker thread to process any queued messages
-        """
+        """Function for worker thread to process any queued messages"""
         while not self.closed:
             message = await self.message_queue.get()
 
@@ -100,21 +116,25 @@ class WebTransportSession:
         message = parse_client_message(json.loads(raw_message))
         print(message.type)
 
-        match message:
-            case ClientEventBase():
-                response = await self.dispatch_event(message)
+        try:
+            match message:
+                case ClientEventBase():
+                    response = await self.dispatch_event(message)
 
-                if response:
+                    if response:
+                        self.send_message(response)
+
+                case ClientRequestBase():
+                    response = await self.dispatch_request(message)
                     self.send_message(response)
 
-            case ClientRequestBase():
-                response = await self.dispatch_request(message)
-                self.send_message(response)
-
-            case _:
-                self.send_message(MessageErrorResponse(
-                    message=f"{message.type}-not-implemented"
-                ))
+                case _:
+                    self.send_message(
+                        MessageErrorResponse(message=f"{message.type}-not-implemented")
+                    )
+        finally:
+            if self.meeting.closed:
+                await self.terminate()
 
     async def dispatch_event(self, event: ClientEvent) -> ServerMessage | None:
         try:
@@ -142,7 +162,7 @@ class WebTransportSession:
             )
 
     async def dispatch_request(self, request: ClientRequest) -> ServerResponse:
-        """ Dispatches request to its correct request_handler
+        """Dispatches request to its correct request_handler
         returns a ServerResponse to be sent back to the client
         """
         try:
@@ -164,7 +184,7 @@ class WebTransportSession:
                         request_id=request.request_id,
                         message=f"{request.type}-not-implemented",
                     )
-                
+
         except (RoomError, MeetingError) as error:
             return RequestErrorResponse(
                 request_id=request.request_id,
@@ -174,12 +194,12 @@ class WebTransportSession:
         except Exception:
             traceback.print_exc()
             return RequestErrorResponse(
-            request_id=request.request_id,
-            message="internal-server-error",
-        )
+                request_id=request.request_id,
+                message="internal-server-error",
+            )
 
     def send_message(self, message: ServerMessage) -> None:
-        """ Send a message through the WebTransport stream
+        """Send a message through the WebTransport stream
         serialize the message according to Server Message
         """
         if self.closed:
@@ -200,7 +220,7 @@ class WebTransportSession:
         self.transmit()
 
     async def close(self) -> None:
-        """ Close WebTransport Session:
+        """Release resources owned by this session:
         - clear worker
         - clear webrtc
         - clear participant
@@ -224,13 +244,26 @@ class WebTransportSession:
                 print(f"Meeting cleanup failed: {err}")
                 traceback.print_exc()
 
+    async def terminate(self) -> None:
+        if self.closed or self.terminated:
+            return
+
+        self.terminated = True
+
+        try:
+            await self.request_termination(self.session_id)
+        except Exception:
+            self.terminated = False
+            raise
+
 
 class WebTransportProtocol(QuicConnectionProtocol):
-    """ QUIC protocol implementation for a WebTransport connection:
+    """QUIC protocol implementation for a WebTransport connection:
     Filters HTTP/3 events from QUIC events,
     instantiates a WebTransport session,
     and forwards relevant events to the session.
     """
+
     def __init__(self, *args, room_manager: RoomManager, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.http: H3Connection | None = None
@@ -247,7 +280,7 @@ class WebTransportProtocol(QuicConnectionProtocol):
         except asyncio.CancelledError:
             raise
         except ConnectionError:
-            pass
+            await self.close_all_handlers()
 
     def quic_event_received(self, event) -> None:
         if isinstance(event, ProtocolNegotiated):
@@ -266,7 +299,8 @@ class WebTransportProtocol(QuicConnectionProtocol):
         if isinstance(event, HeadersReceived):
             headers = dict(event.headers)
 
-            if (headers.get(b":method") == b"CONNECT"
+            if (
+                headers.get(b":method") == b"CONNECT"
                 and headers.get(b":protocol") == b"webtransport"
                 and headers.get(b":path") == b"/wt"
             ):
@@ -274,7 +308,8 @@ class WebTransportProtocol(QuicConnectionProtocol):
                     connection=self.http,
                     session_id=event.stream_id,
                     transmit=self.transmit,
-                    room_manager = self.room_manager
+                    room_manager=self.room_manager,
+                    request_termination=self.terminate_handler,
                 )
 
                 self.handlers[event.stream_id] = handler
@@ -301,11 +336,17 @@ class WebTransportProtocol(QuicConnectionProtocol):
         elif isinstance(event, WebTransportStreamDataReceived):
             self.spawn(self.handle_webtransport_event(event))
 
+        elif (
+            isinstance(event, DataReceived)
+            and event.stream_ended
+            and event.stream_id in self.handlers
+        ):
+            self.spawn(self.close_handler(event.stream_id))
+
     def spawn(self, coro) -> None:
         task = asyncio.create_task(coro)
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
-
 
     async def handle_webtransport_event(self, event) -> None:
         handler = self.handlers.get(event.session_id)
@@ -325,16 +366,17 @@ class WebTransportProtocol(QuicConnectionProtocol):
                 data=b"",
                 end_stream=True,
             )
-            
+
             handler.transmit()
             return
 
         if event.stream_ended:
-            print("Webtransport Session Ended", event.session_id)
-
+            await handler.message_queue.join()
             await self.close_handler(event.session_id)
 
     async def close_handler(self, session_id: int) -> None:
+        print("Webtransport Session Ended", session_id)
+
         handler = self.handlers.pop(session_id, None)
 
         if handler is None:
@@ -358,4 +400,19 @@ class WebTransportProtocol(QuicConnectionProtocol):
             *(handler.close() for handler in handlers),
             return_exceptions=True,
         )
-    
+
+    async def terminate_handler(self, session_id: int) -> None:
+        handler = self.handlers.get(session_id)
+
+        if handler is None:
+            return
+
+        if handler.control_stream_id is not None:
+            handler.connection._quic.send_stream_data(
+                stream_id=handler.control_stream_id,
+                data=b"",
+                end_stream=True,
+            )
+            handler.transmit()
+
+        await self.close_handler(session_id)

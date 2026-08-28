@@ -1,10 +1,10 @@
 from aiortc import (
-    RTCPeerConnection, 
-    RTCSessionDescription, 
-    MediaStreamTrack, 
-    RTCRtpSender, 
+    RTCPeerConnection,
+    RTCSessionDescription,
+    MediaStreamTrack,
+    RTCRtpSender,
     RTCConfiguration,
-    RTCIceServer
+    RTCIceServer,
 )
 
 from typing import Callable, Awaitable
@@ -19,17 +19,18 @@ class OutgoingMediaHint:
     track_id: str
     kind: str
 
+
 @dataclass(frozen=True)
 class OutgoingMediaInfo(OutgoingMediaHint):
-    mid: str 
+    mid: str
 
 
 class WebRTCSession:
     def __init__(
-        self, 
+        self,
         publish_track: Callable[[MediaStreamTrack], Awaitable[None]],
         unpublish_track: Callable[[str], Awaitable[None]],
-        on_terminated: Callable[[], Awaitable[None]]
+        on_terminated: Callable[[], Awaitable[None]],
     ) -> None:
         configuration = RTCConfiguration(
             iceServers=[
@@ -38,12 +39,12 @@ class WebRTCSession:
                 ),
             ],
         )
-        
+
         self.pc = RTCPeerConnection(configuration=configuration)
 
         # handles local tracks
-        self.incoming_tracks: dict[str, MediaStreamTrack] = {} 
-         # handles remote tracks
+        self.incoming_tracks: dict[str, MediaStreamTrack] = {}
+        # handles remote tracks
         self.outgoing_senders: dict[tuple[str, str], RTCRtpSender] = {}
 
         self.closed = False
@@ -82,13 +83,13 @@ class WebRTCSession:
                 await self.on_terminated()
 
     async def handle_offer(self, sdp: str) -> tuple[str, list[OutgoingMediaInfo]]:
-        """ Handle the offer created by the browser 
+        """Handle the offer created by the browser
         returns the sdp answer
         """
         async with self.negotiation_lock:
             if self.closed:
                 raise RuntimeError("WebRTC session is closed")
-            
+
             offer = RTCSessionDescription(sdp=sdp, type="offer")
             await self.pc.setRemoteDescription(offer)
 
@@ -100,12 +101,12 @@ class WebRTCSession:
             return self.pc.localDescription.sdp, media
 
     async def add_remote_participant_track(
-        self, 
-        publisher_id: str, 
+        self,
+        publisher_id: str,
         track_id: str,
         track: MediaStreamTrack,
     ) -> bool:
-        """ Attach another participant's track
+        """Attach another participant's track
         affects outgoing_senders
         """
         async with self.negotiation_lock:
@@ -128,7 +129,7 @@ class WebRTCSession:
         async with self.negotiation_lock:
             if self.closed:
                 raise RuntimeError("WebRTC session is closed")
-            
+
             key = (publisher_id, track_id)
             sender = self.outgoing_senders.pop(key, None)
 
