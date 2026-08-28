@@ -79,8 +79,11 @@ class WebRTCSession:
             if self.closed:
                 return
 
-            if self.pc.connectionState in ("failed", "closed"):
+            if self.pc.connectionState == "failed":
                 await self.on_terminated()
+
+            if self.pc.connectionState == "closed":
+                pass
 
     async def handle_offer(self, sdp: str) -> tuple[str, list[OutgoingMediaInfo]]:
         """Handle the offer created by the browser
