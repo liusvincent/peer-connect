@@ -123,6 +123,7 @@ class MeetingHandler:
                 self._publish_track,
                 self._unpublish_track,
                 self._handle_webrtc_terminated,
+                self.close
             )
 
         try:

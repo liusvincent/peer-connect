@@ -30,7 +30,8 @@ class WebRTCSession:
         self,
         publish_track: Callable[[MediaStreamTrack], Awaitable[None]],
         unpublish_track: Callable[[str], Awaitable[None]],
-        on_terminated: Callable[[], Awaitable[None]],
+        on_fail: Callable[[], Awaitable[None]],
+        on_close: Callable[[], Awaitable[None]],
     ) -> None:
         configuration = RTCConfiguration(
             iceServers=[
@@ -52,7 +53,8 @@ class WebRTCSession:
 
         self.publish_track = publish_track
         self.unpublish_track = unpublish_track
-        self.on_terminated = on_terminated
+        self.on_fail = on_fail
+        self.on_close = on_close
 
         @self.pc.on("track")
         async def on_track(track: MediaStreamTrack):
@@ -83,7 +85,7 @@ class WebRTCSession:
                 await self.on_terminated()
 
             if self.pc.connectionState == "closed":
-                pass
+                await self.on_close()
 
     async def handle_offer(self, sdp: str) -> tuple[str, list[OutgoingMediaInfo]]:
         """Handle the offer created by the browser
@@ -144,7 +146,7 @@ class WebRTCSession:
 
             for transceiver in self.pc.getTransceivers():
                 if transceiver.sender is sender:
-                    transceiver.direction = "inactive"
+                    await transceiver.stop()
                     break
 
             if old_relayed_track is not None:
