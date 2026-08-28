@@ -23,6 +23,8 @@ from webrtc import WebRTCSession
 from typing import Callable, Awaitable
 from uuid import uuid4
 
+import traceback
+
 
 class MeetingError(Exception):
     code = "meeting-error"
@@ -125,7 +127,9 @@ class MeetingHandler:
 
         try:
             answer_sdp, outgoing_media = await self.webrtc.handle_offer(request.sdp)
-        except Exception:
+        except Exception as err:
+            print(f"WebRTC offer failed: {type(err).__name__}: {err}")
+            traceback.print_exc()
             await self.close()
             raise
 
