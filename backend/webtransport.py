@@ -10,6 +10,7 @@ import asyncio
 
 from rooms import RoomManager, RoomError
 
+from pydantic import ValidationError
 from messages import (
     ClientRequest,
     ServerResponse,
@@ -113,7 +114,12 @@ class WebTransportSession:
                 self.message_queue.task_done()
 
     async def dispatch_message(self, raw_message: bytes) -> None:
-        message = parse_client_message(json.loads(raw_message))
+        try:
+            message = parse_client_message(json.loads(raw_message))
+        except (UnicodeDecodeError, json.JSONDecodeError, ValidationError):
+            self.send_message(MessageErrorResponse(message="invalid-message"))
+            return
+    
         print(message.type)
 
         try:
@@ -128,10 +134,6 @@ class WebTransportSession:
                     response = await self.dispatch_request(message)
                     self.send_message(response)
 
-                case _:
-                    self.send_message(
-                        MessageErrorResponse(message=f"{message.type}-not-implemented")
-                    )
         finally:
             if self.meeting.closed:
                 await self.terminate()
@@ -142,11 +144,6 @@ class WebTransportSession:
                 case WebRTCReady():
                     await self.meeting.handle_webrtc_ready()
                     return None
-                case _:
-                    return EventErrorResponse(
-                        event_id=event.event_id,
-                        message=f"{event.type}-not-implemented",
-                    )
 
         except (RoomError, MeetingError) as error:
             return EventErrorResponse(

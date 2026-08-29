@@ -126,6 +126,11 @@ async function listenForMessage(
 async function handleMessage(
   message: ServerMessage,
 ): Promise<void> {
+  if (message.type === "message-error") {
+    console.error(message.message);
+    return;
+  }
+
   if ("request_id" in message) {
     handleResponse(message);
     return;

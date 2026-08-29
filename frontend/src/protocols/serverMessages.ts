@@ -64,4 +64,9 @@ export type EventErrorResponse = ServerEventBase & {
 
 export type ServerEvent = WebRTCOfferNeeded | RoomUpdated | EventErrorResponse;
 
-export type ServerMessage = ServerResponse | ServerEvent;
+export type MessageErrorResponse = {
+  type: "message-error";
+  message: string;
+};
+
+export type ServerMessage = ServerResponse | ServerEvent | MessageErrorResponse;
