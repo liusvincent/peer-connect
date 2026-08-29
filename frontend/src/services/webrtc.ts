@@ -74,38 +74,76 @@ export function createWebRTCSession(options: WebRTCSessionOptions): WebRTCSessio
     localStreamAdded = true;
   }
 
-  // const preparedSubscriptions = new Set<string>();
-  const recvTransceivers = new Map<string, RTCRtpTransceiver>();
+  type RecvSlot = {
+    transceiver: RTCRtpTransceiver;
+    kind: "audio" | "video";
+    subscriptionKey: string | null;
+  }
+
+  const recvSlots: RecvSlot[] = [];
+  const activeByKey = new Map<string, RecvSlot>();
+
+  function releaseSlot(key: string): void {
+    const slot = activeByKey.get(key);
+    if (!slot) return;
+
+    slot.transceiver.direction = "inactive"
+    slot.subscriptionKey = null;
+    activeByKey.delete(key);
+  }
+
+  function acquireSlot(key: string, kind: "audio" | "video"): RecvSlot {
+    const existing = activeByKey.get(key);
+    if (existing) return existing;
+
+    let slot = recvSlots.find(
+      (candidate) => 
+        candidate.subscriptionKey === null && 
+        candidate.kind === kind
+    );
+
+    if (!slot) {
+      slot = {
+        transceiver: pc.addTransceiver(kind, {
+          direction: "recvonly",
+        }),
+        kind,
+        subscriptionKey: null,
+      };
+
+      recvSlots.push(slot);
+    } else {
+      slot.transceiver.direction = "recvonly";
+    }
+
+    slot.subscriptionKey = key;
+    activeByKey.set(key, slot);
+
+    return slot;
+  }
 
   function handleReceivingTransceivers(media: MediaHint[]): void {
     if (closed) {
       throw new Error("WebRTC session has already closed");
     }
 
-    const desiredKeys = new Set(
-      media.map((item) => `${item.participant_id}:${item.track_id}`),
+    const desiredByKey = new Map(
+      media.map((item) => [
+        `${item.participant_id}:${item.track_id}`, 
+        item,
+      ]),
     );
 
-    // Remove subscriptions that the server no longer advertises.
-    for (const [key, transceiver] of recvTransceivers) {
-      if (!desiredKeys.has(key)) {
-        transceiver.receiver.track?.stop();
-        transceiver.stop()
-        recvTransceivers.delete(key);
+    // Release slots to be reused
+    for (const key of [...activeByKey.keys()]) {
+      if (!desiredByKey.has(key)) {
+        releaseSlot(key);
       }
     }
 
-    // Add newly advertised subscriptions.
-    for (const item of media) {
-      const key = `${item.participant_id}:${item.track_id}`;
-
-      if (!recvTransceivers.has(key)) {
-        const transceiver = pc.addTransceiver(item.kind, {
-          direction: "recvonly",
-        });
-
-        recvTransceivers.set(key, transceiver);
-      }
+    // Reuse slots or allocate new ones
+    for (const [key, item] of desiredByKey) {
+      acquireSlot(key, item.kind);
     }
   }
 

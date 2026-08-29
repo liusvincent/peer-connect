@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import type { ClientRequest, ServerEvent, WebRTCOfferNeeded } from "../protocols";
+import type {
+  ClientRequest,
+  ServerEvent,
+  WebRTCOfferNeeded,
+} from "../protocols";
 
 import { useWebTransport } from "../hooks/useWebTransport";
 import { useLocalMedia } from "../hooks/useLocalMedia";
@@ -22,7 +26,8 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<CallMediaStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [remoteMedia, setRemoteMedia] = useState<RemoteParticipantMedia[]>([]);
-  const [connectionState, setConnectionState] = useState<RTCPeerConnectionState | null>(null);
+  const [connectionState, setConnectionState] =
+    useState<RTCPeerConnectionState | null>(null);
 
   const transport = useWebTransport();
   const localMedia = useLocalMedia();
@@ -41,14 +46,13 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    return transport.listen(handleWebRTCOfferNeeded)
+    return transport.listen(handleWebRTCOfferNeeded);
   }, [transport]);
 
   const negotiationRef = useRef<Promise<void>>(Promise.resolve());
 
   function handleWebRTCOfferNeeded(event: ServerEvent): void {
-    if (event.type !== "webrtc-offer-needed")
-      return;
+    if (event.type !== "webrtc-offer-needed") return;
 
     negotiationRef.current = negotiationRef.current
       .then(() => renegotiate(event))
@@ -97,7 +101,7 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     try {
       const localStream = localMedia.stream ?? (await localMedia.start());
 
-      session.addLocalStream(localStream)
+      session.addLocalStream(localStream);
 
       const offerSdp = await session.createOffer();
 
@@ -121,13 +125,12 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
         ]),
       );
 
-
       await session.applyAnswer(answer.sdp);
 
       await transport.sendEvent({
         type: "webrtc-ready",
         event_id: crypto.randomUUID(),
-      })
+      });
 
       return session;
     } catch (err) {
@@ -161,29 +164,26 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     const subscription = remoteByMidRef.current.get(media.mid);
     if (!subscription) return;
 
-    subscription.track = media.track;
+    const mid = media.mid;
+    const track = media.track;
 
-    media.track.addEventListener(
+    subscription.track = track;
+
+    track.addEventListener(
       "ended",
       () => {
-        if (subscription.track === media.track) {
-          subscription.track = null;
-        }
+        const current = remoteByMidRef.current.get(mid);
 
-        removeRemoteTrack(
-          subscription.participantId,
-          media.track,
-        );
+        if (current?.track === track) {
+          current.track = null;
+          removeRemoteTrack(current.participantId, track);
+        }
       },
       { once: true },
     );
 
     setRemoteMedia((current) =>
-      addTrackToParticipant(
-        current,
-        subscription.participantId,
-        media.track,
-      ),
+      addTrackToParticipant(current, subscription.participantId, media.track),
     );
   }
 
@@ -213,7 +213,10 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     return [...current];
   }
 
-  function removeRemoteTrack(participantId: string, track: MediaStreamTrack): void {
+  function removeRemoteTrack(
+    participantId: string,
+    track: MediaStreamTrack,
+  ): void {
     setRemoteMedia((current) =>
       current.flatMap((participant) => {
         if (participant.participantId !== participantId) {
@@ -235,7 +238,7 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
     if (!sessionRef.current) {
       return;
     }
-    
+
     setConnectionState(state);
 
     if (state === "connected") {
@@ -290,7 +293,7 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
 
   async function renegotiate(event: WebRTCOfferNeeded): Promise<void> {
     const session = sessionRef.current;
-    
+
     if (!session) {
       return;
     }
@@ -325,17 +328,35 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
 
       for (const [key, subscription] of previousByKey) {
         if (!activeKeys.has(key) && subscription.track) {
-          removeRemoteTrack(
-            subscription.participantId,
-            subscription.track,
-          );
+          removeRemoteTrack(subscription.participantId, subscription.track);
         }
       }
+
+      const reassignedTracks: Array<{
+        participantId: string;
+        track: MediaStreamTrack;
+      }> = [];
 
       remoteByMidRef.current = new Map(
         answer.media_info.map((item) => {
           const key = `${item.participant_id}:${item.track_id}`;
-          const existing = previousByKey.get(key);
+
+          const existingByKey = previousByKey.get(key);
+          const existingByMid = previous.get(item.mid);
+
+          const track = existingByKey?.track ?? existingByMid?.track ?? null;
+
+          // The MID/receiver survived but now belongs to another participant.
+          if (
+            track &&
+            existingByMid &&
+            existingByMid.participantId !== item.participant_id
+          ) {
+            reassignedTracks.push({
+              participantId: item.participant_id,
+              track,
+            });
+          }
 
           return [
             item.mid,
@@ -343,17 +364,30 @@ export function CallMediaProvider({ children }: { children: ReactNode }) {
               participantId: item.participant_id,
               trackId: item.track_id,
               kind: item.kind,
-              track: existing?.track ?? null,
+              track,
             },
           ];
         }),
       );
 
-        
       await session.applyAnswer(answer.sdp);
+
+      if (reassignedTracks.length > 0) {
+        setRemoteMedia((current) =>
+          reassignedTracks.reduce(
+            (next, reassigned) =>
+              addTrackToParticipant(
+                next,
+                reassigned.participantId,
+                reassigned.track,
+              ),
+            current,
+          ),
+        );
+      }
     } catch (err) {
-      stop()
-      throw err
+      stop();
+      throw err;
     }
   }
 

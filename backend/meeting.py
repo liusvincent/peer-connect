@@ -51,7 +51,7 @@ class WebRTCUnavailable(MeetingError):
 
 
 class MeetingHandler:
-    """Handler for meeting logic"""
+    """Handler for meeting logic of a participant's session"""
 
     def __init__(
         self,
@@ -90,20 +90,6 @@ class MeetingHandler:
 
         return participant, participant.room_id
 
-    def _require_webrtc(self) -> WebRTCSession:
-        self._is_open()
-
-        webrtc = self.webrtc
-
-        if (
-            webrtc is None
-            or webrtc.closed
-            or webrtc.pc.connectionState in ("failed", "closed")
-        ):
-            raise WebRTCUnavailable()
-
-        return webrtc
-
     async def _handle_webrtc_terminated(self) -> None:
         if self.closed:
             return
@@ -123,7 +109,6 @@ class MeetingHandler:
                 self._publish_track,
                 self._unpublish_track,
                 self._handle_webrtc_terminated,
-                self.close
             )
 
         try:
@@ -265,6 +250,20 @@ class MeetingHandler:
                 room=room,
             )
         )
+
+    def _require_webrtc(self) -> WebRTCSession:
+        self._is_open()
+
+        webrtc = self.webrtc
+
+        if (
+            webrtc is None
+            or webrtc.closed
+            or webrtc.pc.connectionState in ("failed", "closed")
+        ):
+            raise WebRTCUnavailable()
+
+        return webrtc
 
     async def handle_webrtc_ready(self) -> None:
         if self.media_ready:
